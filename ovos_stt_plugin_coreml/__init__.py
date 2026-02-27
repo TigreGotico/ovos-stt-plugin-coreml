@@ -66,7 +66,7 @@ class CoremlSTT(STT):
             prev = t
 
         # Load vocab and decode
-        text = "".join(self.vocab[i] for i in decoded).replace("", " ").strip()
+        text = "".join(self.vocab[i] for i in decoded).replace("_", " ").strip()
 
         return [(text, 1.0)]
 

@@ -34,6 +34,8 @@ pip install -e .
 
 ## Configuration
 
+Download or convert a model, e.g. [parakeet-tdt_ctc-110m](https://huggingface.co/TigreGotico/parakeet-tdt_ctc-110m-coreml)
+
 ```json
   "stt": {
     "module": "ovos-stt-plugin-coreml",
