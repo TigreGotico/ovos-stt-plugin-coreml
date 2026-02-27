@@ -47,12 +47,12 @@ class CoremlSTT(STT):
         })
         encoder = enc_out["encoder"]
         encoder_length = enc_out["encoder_length"]
-        print(f"Encoder output shape: {encoder.shape}")  # [1, hidden, T]
+        #print(f"Encoder output shape: {encoder.shape}")  # [1, hidden, T]
 
         # Stage 2: CTC Decoder
         dec_out = self.ctc_decoder.predict({"encoder": encoder})
         log_probs = dec_out["log_probs"]  # [1, T, vocab+1]
-        print(f"Log probs shape: {log_probs.shape}")
+        #print(f"Log probs shape: {log_probs.shape}")
 
         # Greedy decode
         token_ids = np.argmax(log_probs[0], axis=-1)  # [T]
@@ -66,7 +66,7 @@ class CoremlSTT(STT):
             prev = t
 
         # Load vocab and decode
-        text = "".join(self.vocab[i] for i in decoded).replace("_", " ").strip()
+        text = "".join(self.vocab[i] for i in decoded).replace(" ", "").replace("▁", " ").strip()
 
         return [(text, 1.0)]
 
