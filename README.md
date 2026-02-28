@@ -34,7 +34,7 @@ pip install -e .
 
 ## Configuration
 
-Download or convert a model, e.g. [parakeet-tdt_ctc-110m](https://huggingface.co/TigreGotico/parakeet-tdt_ctc-110m-coreml)
+Download or convert a model, e.g. [parakeet-tdt_ctc-110m](https://huggingface.co/OpenVoiceOS/parakeet-tdt_ctc-110m-coreml). You find some pre-converted models in this [huggingface collection](https://huggingface.co/collections/OpenVoiceOS/stt-asr-coreml)
 
 ```json
   "stt": {
