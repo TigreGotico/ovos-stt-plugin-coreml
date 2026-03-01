@@ -12,6 +12,16 @@ _UNK_LOG_PROB = -23.026  # fallback for OOV words (~log(10^-10))
 
 
 def _logaddexp(a: float, b: float) -> float:
+    """
+    Compute the numerically stable logarithm of the sum of two values given in natural log space.
+    
+    Parameters:
+        a (float): First value in natural log space; may be `_NEG_INF` to represent negative infinity.
+        b (float): Second value in natural log space; may be `_NEG_INF` to represent negative infinity.
+    
+    Returns:
+        float: The value of `log(exp(a) + exp(b))`. If one operand equals `_NEG_INF`, returns the other operand.
+    """
     if a == _NEG_INF:
         return b
     if b == _NEG_INF:
@@ -25,12 +35,30 @@ class ARPALanguageModel:
 
     def __init__(self):
         # {word: (log_prob_nat, backoff_nat)}
+        """
+        Initialize an empty ARPA language model storage.
+        
+        Creates containers for unigram and bigram entries:
+        - `unigrams`: mapping from word to a tuple (log_probability_in_nats, backoff_in_nats).
+        - `bigrams`: mapping from context word to a dictionary mapping next-word to (log_probability_in_nats, backoff_in_nats).
+        """
         self.unigrams: Dict[str, Tuple[float, float]] = {}
         # {context: {word: (log_prob_nat, backoff_nat)}}
         self.bigrams: Dict[str, Dict[str, Tuple[float, float]]] = {}
 
     @classmethod
     def load(cls, path: str) -> "ARPALanguageModel":
+        """
+        Load an ARPA-format language model file and return a populated ARPALanguageModel instance.
+        
+        Parses unigram and bigram sections from the ARPA file at `path`, converting log10 probabilities to natural-log space and storing per-token probabilities and backoff weights. Lines that cannot be parsed as valid probabilities are skipped; sections are detected by lines beginning with "\" and parsing stops at "\end\".
+        
+        Parameters:
+            path (str): Filesystem path to the ARPA-format file to load.
+        
+        Returns:
+            ARPALanguageModel: An instance with `unigrams` and `bigrams` populated with tuples of (log_prob_nat, backoff_nat).
+        """
         lm = cls()
         section = ""
         with open(path, encoding="utf-8") as f:
@@ -59,6 +87,16 @@ class ARPALanguageModel:
         return lm
 
     def score(self, word: str, prev: Optional[str]) -> float:
+        """
+        Compute the log-probability (in nats) of a target word given an optional previous word.
+        
+        Parameters:
+            word (str): Target word whose probability is requested.
+            prev (Optional[str]): Previous completed word used as bigram context, or `None` to use unigram probability.
+        
+        Returns:
+            float: Log probability in nats for `word` given `prev`. If a bigram entry for (prev, word) exists that value is returned; otherwise the previous word's backoff (if any) is added to the unigram probability for `word`, with a fallback unknown-word log-probability for unseen words.
+        """
         """Return log-prob (nats) of word given optional preceding word."""
         if prev is not None and prev in self.bigrams and word in self.bigrams[prev]:
             return self.bigrams[prev][word][0]
@@ -78,10 +116,22 @@ class _Beam:
 
     @property
     def acoustic(self) -> float:
+        """
+        Combined acoustic log-probability of the beam.
+        
+        Returns:
+            float: log-sum-exp of `p_blank` and `p_nonblank`, i.e. the total acoustic log-probability for this beam.
+        """
         return _logaddexp(self.p_blank, self.p_nonblank)
 
     @property
     def total(self) -> float:
+        """
+        Total score combining the acoustic probability and accumulated language-model score.
+        
+        Returns:
+            total (float): Sum of the beam's acoustic score and its LM score.
+        """
         return self.acoustic + self.lm_score
 
 
@@ -95,6 +145,22 @@ def ctc_beam_search(
         word_bonus: float,
         token_candidates: int = 40,
 ) -> str:
+    """
+        Perform CTC beam search decoding with ARPA bigram language-model rescoring.
+        
+        Parameters:
+            log_probs (np.ndarray): [T, V] array of per-timestep log-probabilities.
+            vocab (List[str]): Mapping from token index to token string (word-piece tokens, use "▁" as word boundary).
+            lm (ARPALanguageModel): Bigram ARPA language model used to rescore completed words.
+            blank_id (int): Index of the CTC blank token in `vocab` / probability columns.
+            beam_width (int): Number of candidate beams to keep after each timestep.
+            lm_weight (float): Multiplier applied to LM log-probabilities when rescoring completed words.
+            word_bonus (float): Additive score applied each time a word finishes (at word-boundary tokens).
+            token_candidates (int): Maximum number of non-blank token indices considered per frame (default 40).
+        
+        Returns:
+            str: Decoded hypothesis as a human-readable string (word-piece tokens joined, "▁" replaced by spaces, trimmed).
+        """
     """CTC beam search with bigram ARPA LM rescoring.
 
     log_probs: [T, V] float32 array of per-timestep log-probabilities.
@@ -115,6 +181,17 @@ def ctc_beam_search(
         new_beams: Dict[tuple, _Beam] = {}
 
         def merge(prefix: tuple, b: _Beam) -> None:
+            """
+            Merge a beam into the next-step beam dictionary, accumulating probabilities when the prefix already exists.
+            
+            Parameters:
+                prefix (tuple): Token-index tuple representing the beam prefix key.
+                b (_Beam): Beam to insert or merge into the surrounding `new_beams` mapping.
+            
+            Notes:
+                Mutates the outer-scope `new_beams` dictionary by either inserting `b` under `prefix`
+                or updating the existing entry's `p_blank` and `p_nonblank` by adding probabilities in log-space.
+            """
             if prefix in new_beams:
                 e = new_beams[prefix]
                 e.p_blank = _logaddexp(e.p_blank, b.p_blank)

@@ -12,6 +12,27 @@ from ovos_stt_plugin_coreml.lm import ARPALanguageModel, ctc_beam_search
 
 class CoremlSTT(STT):
     def __init__(self, *args, **kwargs):
+        """
+        Initialize the CoremlSTT instance by loading model metadata, Core ML encoder/decoder, vocabulary, and optional language model; also configure decoding parameters.
+        
+        Expects self.config to contain:
+        - "metadata": path to a JSON file with keys "sample_rate", "max_audio_samples", and "blank_id" (used to set SAMPLE_RATE, MAX_SAMPLES, BLANK_ID).
+        - "encoder": path to a Core ML encoder model file.
+        - "decoder": path to a Core ML decoder model file.
+        - "vocab": path to a JSON vocabulary file (list or mapping used for token->text conversion).
+        
+        Optional config keys:
+        - "lm": path to an ARPA language model file; when present, an ARPALanguageModel is loaded and beam-search decoding is enabled.
+        - "lm_weight": numeric weight applied to the language model during beam search (default 0.3).
+        - "word_bonus": numeric bonus applied per word during beam search (default 1.0).
+        - "beam_width": integer beam width for beam search (default 100).
+        
+        Sets the following instance attributes:
+        - SAMPLE_RATE, MAX_SAMPLES, BLANK_ID from metadata.
+        - mel_encoder (Core ML encoder model) and ctc_decoder (Core ML decoder model).
+        - vocab (loaded vocabulary).
+        - lm (ARPALanguageModel or None), lm_weight (float), word_bonus (float), beam_width (int).
+        """
         super().__init__(*args, **kwargs)
         # Load metadata
         with open(self.config["metadata"]) as f:
@@ -37,7 +58,12 @@ class CoremlSTT(STT):
         self.beam_width: int = int(self.config.get("beam_width", 100))
 
     def transcribe(self, audio: AudioData, lang: Optional[str] = None) -> List[Tuple[str, float]]:
-        """Transcribe audio. Uses beam search + LM when configured, greedy otherwise."""
+        """
+        Produce a transcription for the given audio using an optional language model; when a language model is configured, beam-search decoding is applied, otherwise greedy CTC decoding is used.
+        
+        Returns:
+            List[Tuple[str, float]]: A list containing a single tuple with the transcript string and its confidence score (0.0–1.0).
+        """
         audio_array = audio.get_np_float32(convert_rate=self.SAMPLE_RATE)
         # pad/trim audio
         original_len = len(audio_array)
