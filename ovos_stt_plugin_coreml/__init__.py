@@ -74,7 +74,7 @@ class CoremlSTT(STT):
                 if t != self.BLANK_ID and t != prev:
                     decoded.append(int(t))
                 prev = t
-            text = "".join(self.vocab[i] for i in decoded).replace("▁", " ").strip()
+            text = "".join(self.vocab[i] for i in decoded if i < len(self.vocab)).replace("▁", " ").strip()
 
         return [(text, 1.0)]
 
