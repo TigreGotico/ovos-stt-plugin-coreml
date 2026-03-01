@@ -97,6 +97,7 @@ class ARPALanguageModel:
         Returns:
             float: Log probability in nats for `word` given `prev`. If a bigram entry for (prev, word) exists that value is returned; otherwise the previous word's backoff (if any) is added to the unigram probability for `word`, with a fallback unknown-word log-probability for unseen words.
         """
+        """Return log-prob (nats) of word given optional preceding word."""
         if prev is not None and prev in self.bigrams and word in self.bigrams[prev]:
             return self.bigrams[prev][word][0]
         backoff = self.unigrams[prev][1] if prev is not None and prev in self.unigrams else 0.0
@@ -160,6 +161,11 @@ def ctc_beam_search(
         Returns:
             str: Decoded hypothesis as a human-readable string (word-piece tokens joined, "▁" replaced by spaces, trimmed).
         """
+    """CTC beam search with bigram ARPA LM rescoring.
+
+    log_probs: [T, V] float32 array of per-timestep log-probabilities.
+    Returns the best hypothesis as a plain string.
+    """
     T, V = log_probs.shape
     beams: Dict[tuple, _Beam] = {(): _Beam(p_blank=0.0, p_nonblank=_NEG_INF)}
 

@@ -64,6 +64,13 @@ class CoremlSTT(STT):
         Returns:
             List[Tuple[str, float]]: A list containing a single tuple with the transcript string and its confidence score (0.0–1.0).
         """
+
+        self.lm_weight: float = float(self.config.get("lm_weight", 0.3))
+        self.word_bonus: float = float(self.config.get("word_bonus", 1.0))
+        self.beam_width: int = int(self.config.get("beam_width", 100))
+
+    def transcribe(self, audio: AudioData, lang: Optional[str] = None) -> List[Tuple[str, float]]:
+        """Transcribe audio. Uses beam search + LM when configured, greedy otherwise."""
         audio_array = audio.get_np_float32(convert_rate=self.SAMPLE_RATE)
         # pad/trim audio
         original_len = len(audio_array)
