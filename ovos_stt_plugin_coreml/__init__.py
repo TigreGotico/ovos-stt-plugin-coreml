@@ -82,6 +82,11 @@ class CoremlSTT(STT):
     # ── Initialisation ────────────────────────────────────────────────────────
 
     def __init__(self, *args, **kwargs):
+        """
+        Initialize the CoremlSTT instance by loading model metadata and vocabulary and initializing the model-specific components.
+        
+        Loads metadata from the path in self.config["metadata"] and sets SAMPLE_RATE and MAX_SAMPLES, establishes _model_dir for resolving relative model files, determines model_type via _detect_model_type(), loads the vocabulary from an explicit config path (self.config["vocab"]) or from <model_dir>/vocab.json, and then initializes either the TDT or CTC runtime by calling _init_tdt() or _init_ctc().
+        """
         super().__init__(*args, **kwargs)
 
         with open(self.config["metadata"]) as f:
@@ -107,7 +112,14 @@ class CoremlSTT(STT):
             self._init_ctc()
 
     def _detect_model_type(self) -> str:
-        """Infer model type from config or metadata structure."""
+        """
+        Determine the model family used by the loaded CoreML assets.
+        
+        Checks for an explicit `model_type` in the instance config first; if absent, inspects metadata components and keys to infer either "ctc" or "tdt". The resolution order is: explicit config, presence of `ctc_decoder` (-> "ctc"), presence of `joint` or `joint_extra_outputs` (-> "tdt"), presence of `blank_id` (-> "ctc"), then defaults to "ctc".
+        
+        Returns:
+            str: `"ctc"` or `"tdt"` indicating the detected model type.
+        """
         if explicit := self.config.get("model_type"):
             return explicit.lower().strip()
         components = self.meta.get("components", {})
@@ -120,12 +132,20 @@ class CoremlSTT(STT):
         return "ctc"
 
     def _resolve(self, config_key: str, component_name: str) -> str:
-        """Resolve a component path.
-
-        Priority:
-          1. Explicit value in self.config
-          2. <model_dir>/<components[component_name]["path"]> from metadata
-          3. ValueError
+        """
+        Resolve and return a filesystem path for a named model component.
+        
+        Attempts resolution in the following order: 1) return the explicit path string found at `self.config[config_key]` if present; 2) return the path from `self.meta["components"][component_name]["path"]` resolved against `self._model_dir`; 3) raise ValueError if neither source provides a path.
+        
+        Parameters:
+            config_key (str): Configuration key to check for an explicit component path.
+            component_name (str): Component name to look up in metadata's `components` mapping.
+        
+        Returns:
+            str: Resolved filesystem path for the requested component.
+        
+        Raises:
+            ValueError: If the component path cannot be resolved from either config or metadata.
         """
         if path := self.config.get(config_key):
             return path
@@ -139,6 +159,18 @@ class CoremlSTT(STT):
 
     def _init_ctc(self) -> None:
         # blank_id: CTC metadata stores it explicitly; TDT-flavoured hybrid uses vocab_size
+        """
+        Initialize components and configuration for a CTC-based model variant.
+        
+        Loads the mel encoder and CTC decoder CoreML models, optionally loads an ARPA language model if configured, and sets related decoding parameters and attributes on the instance. The following attributes are established:
+        - BLANK_ID: blank token id from metadata (falls back to vocab_size or 1024).
+        - mel_encoder: loaded CoreML model for feature encoding.
+        - ctc_decoder: loaded CoreML model for CTC decoding.
+        - lm: loaded ARPALanguageModel or None if no LM configured.
+        - lm_weight: language model weight (float).
+        - word_bonus: word insertion bonus (float).
+        - beam_width: beam search width (int).
+        """
         self.BLANK_ID: int = self.meta.get("blank_id", self.meta.get("vocab_size", 1024))
 
         self.mel_encoder = ct.models.MLModel(self._resolve("encoder", "mel_encoder"))
@@ -153,6 +185,11 @@ class CoremlSTT(STT):
 
     def _init_tdt(self) -> None:
         # Blank is always vocab_size for pure RNNT
+        """
+        Initialize TDT (RNN-T / transducer) model components and runtime parameters from metadata and configuration.
+        
+        Sets BLANK_ID to the model vocabulary size, loads the mel encoder, decoder, and joint-step CoreML models using resolved paths, extracts decoder LSTM state shapes from metadata into _h_shape and _c_shape, and configures max_symbols_per_step (default 10) from the instance config.
+        """
         self.BLANK_ID: int = self.meta["vocab_size"]
 
         self.mel_encoder = ct.models.MLModel(self._resolve("encoder", "mel_encoder"))
@@ -171,6 +208,17 @@ class CoremlSTT(STT):
     # ── Audio preparation (shared) ────────────────────────────────────────────
 
     def _prepare_audio(self, audio: AudioData) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Convert input audio to the model's fixed-rate, fixed-length float array and its valid length.
+        
+        Parameters:
+            audio (AudioData): Source audio; will be converted to float32 and resampled to the model SAMPLE_RATE.
+        
+        Returns:
+            Tuple[np.ndarray, np.ndarray]:
+                audio_signal: 1-by-N float32 array padded or trimmed to MAX_SAMPLES.
+                audio_length: int32 array containing a single element equal to the valid sample count (min(original length, MAX_SAMPLES)).
+        """
         audio_array = audio.get_np_float32(convert_rate=self.SAMPLE_RATE)
         original_len = len(audio_array)
         if len(audio_array) < self.MAX_SAMPLES:
@@ -184,7 +232,14 @@ class CoremlSTT(STT):
     # ── CTC decoding ──────────────────────────────────────────────────────────
 
     def _decode_ctc(self, encoder_out: np.ndarray) -> str:
-        """CTC: encoder output → text (greedy or beam search)."""
+        """
+        Decode CTC encoder outputs into a normalized transcription string.
+        
+        When a language model is configured, performs beam-search decoding using the model's beam/LM weights and word bonus; otherwise performs greedy decoding by collapsing repeated tokens and removing blank tokens. Subword marker '▁' is replaced with a space and the resulting string is trimmed.
+        
+        Returns:
+            decoded (str): The decoded transcription.
+        """
         dec_out = self.ctc_decoder.predict({"encoder": encoder_out})
         log_probs: np.ndarray = dec_out["log_probs"]        # [1, T, V]
 
@@ -211,10 +266,23 @@ class CoremlSTT(STT):
     # ── TDT decoding ──────────────────────────────────────────────────────────
 
     def _decode_tdt(self, encoder: np.ndarray, encoder_length: np.ndarray) -> str:
-        """TDT greedy decoding loop.
-
-        encoder:        [1, D_enc, T_enc]
-        encoder_length: [1]  — number of valid frames
+        """
+        Perform greedy TDT decoding on encoder outputs and produce a text transcript.
+        
+        Processes encoder frames up to the provided valid frame count using the model's
+        decoder and joint-step predictors. The method emits tokens (skipping the model
+        blank token) and advances frames according to predicted durations, allowing
+        multiple symbols per frame up to `max_symbols_per_step`. Final token ids are
+        mapped through `self.vocab`, the special subword marker `▁` is converted to a
+        space, and the result is stripped of leading/trailing whitespace.
+        
+        Parameters:
+            encoder (np.ndarray): Encoder activations with shape [1, D_enc, T_enc].
+            encoder_length (np.ndarray): Single-element array [1] containing the number
+                of valid encoder frames to decode.
+        
+        Returns:
+            str: Decoded transcript string.
         """
         T = int(encoder_length.flat[0])
 
@@ -286,6 +354,16 @@ class CoremlSTT(STT):
     # ── Public interface ──────────────────────────────────────────────────────
 
     def transcribe(self, audio: AudioData, lang: Optional[str] = None) -> List[Tuple[str, float]]:
+        """
+        Transcribe audio into text using the loaded CoreML model and return a single best transcript with confidence.
+        
+        Parameters:
+            audio (AudioData): Input audio to transcribe; will be resampled and padded/trimmed to the model's expected sample rate and length.
+            lang (Optional[str]): Optional language hint for models that support language selection; ignored if the model does not use it.
+        
+        Returns:
+            transcripts (List[Tuple[str, float]]): A list containing a single tuple of (transcript_text, confidence). The confidence is always 1.0 for the returned transcript.
+        """
         audio_signal, audio_length = self._prepare_audio(audio)
 
         enc_out = self.mel_encoder.predict({
@@ -301,6 +379,16 @@ class CoremlSTT(STT):
         return [(text, 1.0)]
 
     def execute(self, audio, language=None) -> str:
+        """
+        Return the first transcript string produced for the provided audio.
+        
+        Parameters:
+            audio: Audio input to transcribe (format expected by transcribe).
+            language (str, optional): Optional language hint passed to the transcription pipeline.
+        
+        Returns:
+            The top transcription as a string, or an empty string if no transcripts were produced.
+        """
         transcripts = self.transcribe(audio, language)
         return transcripts[0][0] if transcripts else ""
 
@@ -310,6 +398,14 @@ class CoremlSTT(STT):
         # TDT v3 (parakeet-tdt-0.6b-v3) supports 25 European languages with
         # automatic language detection — no language input is needed or accepted.
         # We return the full superset; the loaded model determines actual coverage.
+        """
+        Superset of two-letter language codes that models in this plugin may support.
+        
+        The returned set lists ISO 639-1 language codes potentially supported by available model families; actual language coverage depends on the loaded model (for example, some models are English-only while others provide multilingual support).
+        
+        Returns:
+            languages (set): A set of two-letter ISO 639-1 language codes.
+        """
         return {
             "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk",
             "cs", "ro", "hu", "sv", "fi", "da", "sk", "bg", "hr", "sr",

@@ -48,10 +48,30 @@ MODELS = {
 
 
 def dir_size_mb(path: Path) -> float:
+    """
+    Compute the total size of all files under the given directory, in megabytes.
+    
+    Parameters:
+    	path (Path): Root directory whose files will be counted recursively. Only regular files are included; if `path` is not a directory, matching files under it (if any) are used.
+    
+    Returns:
+    	total_mb (float): Total size of included files in megabytes.
+    """
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file()) / (1024 * 1024)
 
 
 def quantize_model(src: Path, fn, dst: Path) -> float:
+    """
+    Load a CoreML model from `src`, apply the given quantization function, save the quantized model to `dst`, and return its size in megabytes.
+    
+    Parameters:
+        src (Path): Path to the source CoreML .mlpackage to be quantized.
+        fn (Callable[[ct.models.MLModel], ct.models.MLModel]): Function that accepts a loaded CoreML model and returns a quantized CoreML model.
+        dst (Path): Destination path where the quantized model will be saved.
+    
+    Returns:
+        float: Size of the saved quantized model directory in megabytes.
+    """
     print(f"  Loading {src.name}...")
     model = ct.models.MLModel(str(src), compute_units=ct.ComputeUnit.CPU_AND_NE)
     try:
@@ -74,6 +94,14 @@ def quantize_model(src: Path, fn, dst: Path) -> float:
 
 
 def main():
+    """
+    Quantize available CoreML model packages in INPUT_DIR using each configured VARIANTS and write per-variant outputs and a summary.
+    
+    For each quantization variant, creates an output subdirectory under OUTPUT_DIR, writes quantized .mlpackage files for each model found in INPUT_DIR, copies metadata files (metadata.json, vocab.json) if present, and writes a JSON summary at OUTPUT_DIR/quantization_summary.json. Prints baseline sizes, per-variant results, and compression ratios to the console.
+    
+    Raises:
+        SystemExit: if INPUT_DIR does not exist or no expected .mlpackage files are found in INPUT_DIR.
+    """
     if not INPUT_DIR.exists():
         raise SystemExit(f"Input dir not found: {INPUT_DIR}  (run convert_to_coreml.py first)")
 

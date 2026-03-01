@@ -58,26 +58,66 @@ class ValidationResult:
 
 class PreprocessorWrapper(torch.nn.Module):
     def __init__(self, module: torch.nn.Module) -> None:
+        """
+        Initialize the wrapper with an underlying module.
+        
+        Parameters:
+            module (torch.nn.Module): The underlying module to be wrapped and delegated to.
+        """
         super().__init__()
         self.module = module
 
     def forward(self, audio_signal: torch.Tensor, length: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Run the wrapped preprocessor to compute mel spectrograms and their lengths from raw audio.
+        
+        Parameters:
+            audio_signal (torch.Tensor): Audio waveform tensor with shape [B, T] or [1, max_samples].
+            length (torch.Tensor): Tensor of sample lengths; will be coerced to integer dtype.
+        
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: A pair (mel, mel_length) where `mel` is the mel spectrogram tensor and `mel_length` is a tensor of corresponding mel lengths.
+        """
         mel, mel_length = self.module(input_signal=audio_signal, length=length.to(dtype=torch.long))
         return mel, mel_length
 
 
 class EncoderWrapper(torch.nn.Module):
     def __init__(self, module: torch.nn.Module) -> None:
+        """
+        Initialize the wrapper with an underlying module.
+        
+        Parameters:
+            module (torch.nn.Module): The underlying module to be wrapped and delegated to.
+        """
         super().__init__()
         self.module = module
 
     def forward(self, features: torch.Tensor, length: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Encode input feature sequences and return encoded representations with their sequence lengths.
+        
+        Parameters:
+            features (torch.Tensor): Input feature tensor (e.g., acoustic/mel features) for the batch.
+            length (torch.Tensor): Tensor of per-example input lengths (sequence lengths).
+        
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: 
+                - encoded: Encoder output tensor (encoded representations).
+                - encoded_lengths: Tensor of encoded sequence lengths as integers.
+        """
         encoded, encoded_lengths = self.module(audio_signal=features, length=length.to(dtype=torch.long))
         return encoded, encoded_lengths
 
 
 class DecoderWrapper(torch.nn.Module):
     def __init__(self, module: torch.nn.Module) -> None:
+        """
+        Initialize the wrapper with an underlying module.
+        
+        Parameters:
+            module (torch.nn.Module): The underlying module to be wrapped and delegated to.
+        """
         super().__init__()
         self.module = module
 
@@ -88,7 +128,22 @@ class DecoderWrapper(torch.nn.Module):
             h_in: torch.Tensor,
             c_in: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        state = [h_in, c_in]
+        """
+            Run the wrapped decoder with integer token targets and RNN states, returning the decoder output and the updated hidden and cell states.
+            
+            Parameters:
+                targets (torch.Tensor): Sequence of token IDs for prediction (will be cast to long).
+                target_lengths (torch.Tensor): Lengths for each sequence in `targets` (will be cast to long).
+                h_in (torch.Tensor): Initial hidden state passed to the decoder.
+                c_in (torch.Tensor): Initial cell state passed to the decoder.
+            
+            Returns:
+                Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                    - decoder_output: The decoder's output tensor for the given targets.
+                    - new_h: Updated hidden state tensor produced by the decoder.
+                    - new_c: Updated cell state tensor produced by the decoder.
+            """
+            state = [h_in, c_in]
         decoder_output, _, new_state = self.module(
             targets=targets.to(dtype=torch.long),
             target_length=target_lengths.to(dtype=torch.long),
@@ -99,12 +154,28 @@ class DecoderWrapper(torch.nn.Module):
 
 class JointWrapper(torch.nn.Module):
     def __init__(self, module: torch.nn.Module) -> None:
+        """
+        Initialize the wrapper with an underlying module.
+        
+        Parameters:
+            module (torch.nn.Module): The underlying module to be wrapped and delegated to.
+        """
         super().__init__()
         self.module = module
 
     def forward(self, encoder_outputs: torch.Tensor, decoder_outputs: torch.Tensor) -> torch.Tensor:
         # Input: encoder_outputs [B, D, T], decoder_outputs [B, D, U]
         # Transpose to match what projection layers expect
+        """
+        Compute joint-network logits from encoder and decoder representations for RNNT decoding.
+        
+        Parameters:
+            encoder_outputs (torch.Tensor): Encoder outputs with shape [B, D, T] (batch, feature dim, time frames).
+            decoder_outputs (torch.Tensor): Decoder outputs with shape [B, D, U] (batch, feature dim, prediction steps).
+        
+        Returns:
+            torch.Tensor: Logits with shape [B, T, U, V], where V is the output vocabulary size (includes the blank token).
+        """
         encoder_outputs = encoder_outputs.transpose(1, 2)  # [B, T, D]
         decoder_outputs = decoder_outputs.transpose(1, 2)  # [B, U, D]
 
@@ -133,11 +204,29 @@ class MelEncoderWrapper(torch.nn.Module):
     """
 
     def __init__(self, preprocessor: PreprocessorWrapper, encoder: EncoderWrapper) -> None:
+        """
+        Create a fused wrapper that runs the preprocessor (mel extraction) followed by the encoder.
+        
+        Parameters:
+            preprocessor (PreprocessorWrapper): Module that converts raw audio signal and length to mel features and mel lengths.
+            encoder (EncoderWrapper): Module that encodes mel features and mel lengths into encoder outputs and lengths.
+        """
         super().__init__()
         self.preprocessor = preprocessor
         self.encoder = encoder
 
     def forward(self, audio_signal: torch.Tensor, audio_length: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Run the preprocessor then the encoder to produce encoded audio features and their lengths.
+        
+        Parameters:
+            audio_signal: Waveform tensor (batch of audio samples), e.g. shape [B, N].
+            audio_length: Tensor of audio lengths in samples for each batch entry.
+        
+        Returns:
+            encoded: Encoded feature tensor produced by the encoder (batch, time, feature_dim).
+            enc_len: Tensor of encoded lengths (int32) for each batch entry.
+        """
         mel, mel_length = self.preprocessor(audio_signal, audio_length)
         encoded, enc_len = self.encoder(mel, mel_length.to(dtype=torch.int32))
         return encoded, enc_len
@@ -160,12 +249,32 @@ class JointDecisionWrapper(torch.nn.Module):
     """
 
     def __init__(self, joint: JointWrapper, vocab_size: int, num_extra: int) -> None:
+        """
+        Initialize the joint-decision wrapper.
+        
+        Parameters:
+            joint (JointWrapper): Joint network used to produce combined logits.
+            vocab_size (int): Number of tokens in the vocabulary (excluding the blank token).
+            num_extra (int): Number of extra duration output bins produced by the joint (duration logits).
+        """
         super().__init__()
         self.joint = joint
         self.vocab_with_blank = int(vocab_size) + 1
         self.num_extra = int(num_extra)
 
     def forward(self, encoder_outputs: torch.Tensor, decoder_outputs: torch.Tensor):
+        """
+        Produce token and duration decisions from joint-network outputs for each encoder/decoder position.
+        
+        Parameters:
+            encoder_outputs (torch.Tensor): Encoder-side inputs to the joint network, typically shaped [B, T, U, C].
+            decoder_outputs (torch.Tensor): Decoder-side inputs to the joint network, typically shaped [B, T, U, C].
+        
+        Returns:
+            token_ids (torch.Tensor): `int32` tensor of selected token IDs with shape [B, T, U].
+            token_prob (torch.Tensor): `float` tensor of the probability assigned to the selected token with shape [B, T, U].
+            duration (torch.Tensor): `int32` tensor of the predicted duration bin (mapped to frames for v3) with shape [B, T, U].
+        """
         logits = self.joint(encoder_outputs, decoder_outputs)
         token_logits = logits[..., : self.vocab_with_blank]
         duration_logits = logits[..., -self.num_extra:]
@@ -199,6 +308,15 @@ class JointDecisionSingleStep(torch.nn.Module):
     """
 
     def __init__(self, joint: JointWrapper, vocab_size: int, num_extra: int, top_k: int = 64) -> None:
+        """
+        Initialize the single-step joint-decision wrapper that produces token and duration predictions (and top-K candidate tokens) from a JointWrapper.
+        
+        Parameters:
+            joint (JointWrapper): The joint network used to compute combined encoder/decoder logits.
+            vocab_size (int): Number of vocabulary tokens excluding the blank symbol.
+            num_extra (int): Number of extra duration bins produced by the joint (used for duration logits).
+            top_k (int): Number of top token candidates to expose for host-side re-ranking and contextual biasing (default 64).
+        """
         super().__init__()
         self.joint = joint
         self.vocab_with_blank = int(vocab_size) + 1
@@ -208,6 +326,21 @@ class JointDecisionSingleStep(torch.nn.Module):
 
     def forward(self, encoder_step: torch.Tensor, decoder_step: torch.Tensor):
         # Reuse JointWrapper which expects [B, D, T] and [B, D, U]
+        """
+        Produce token prediction, token probability, duration prediction, and top-K token candidates for a single encoder/decoder step.
+        
+        Parameters:
+            encoder_step (torch.Tensor): Encoder features for the current step. Expected shape [1, D, 1] (batch, feature, time) to match the joint network.
+            decoder_step (torch.Tensor): Decoder features for the current step. Expected shape [1, D, 1] (batch, feature, symbols) to match the joint network.
+        
+        Returns:
+            tuple: A 5-tuple containing:
+                token_ids (torch.Tensor): int32 tensor of selected token indices (including blank). Shape [1, 1, 1].
+                token_prob (torch.Tensor): float tensor of the probability of the selected token. Shape [1, 1, 1].
+                duration (torch.Tensor): int32 tensor of the selected duration index from the duration head. Shape [1, 1, 1].
+                topk_ids (torch.Tensor): int32 tensor of top-K token candidate indices for host-side re-ranking. Shape [1, 1, 1, K].
+                topk_logits (torch.Tensor): float tensor of logits corresponding to `topk_ids`. Shape [1, 1, 1, K].
+        """
         logits = self.joint(encoder_step, decoder_step)  # [1, 1, 1, V+extra]
         token_logits = logits[..., : self.vocab_with_blank]
         duration_logits = logits[..., -self.num_extra:]
@@ -234,7 +367,20 @@ def _coreml_convert(
         settings: ExportSettings,
         compute_units_override: Optional[ct.ComputeUnit] = None,
 ) -> ct.models.MLModel:
-    cu = compute_units_override if compute_units_override is not None else settings.compute_units
+    """
+        Convert a traced TorchScript module to a Core ML model using the given export settings.
+        
+        Parameters:
+            traced (torch.jit.ScriptModule): Traced TorchScript module to convert.
+            inputs: Core ML input specifications for the conversion.
+            outputs: Core ML output specifications for the conversion.
+            settings (ExportSettings): Export configuration that supplies default compute units, deployment target, and compute precision.
+            compute_units_override (Optional[ct.ComputeUnit]): If provided, use this compute unit instead of the one in `settings`.
+        
+        Returns:
+            ct.models.MLModel: The converted Core ML model.
+        """
+        cu = compute_units_override if compute_units_override is not None else settings.compute_units
     kwargs = {
         "convert_to": "mlprogram",
         "inputs": inputs,
@@ -251,6 +397,12 @@ def _coreml_convert(
 
 
 def _compute_length(seconds: float, sample_rate: int) -> int:
+    """
+    Compute the number of audio samples corresponding to a duration at the given sample rate by rounding to the nearest sample.
+    
+    Returns:
+        The number of samples as an int.
+    """
     return int(round(seconds * sample_rate))
 
 
@@ -260,7 +412,21 @@ def _prepare_audio(
         max_samples: int,
         seed: Optional[int],
 ) -> torch.Tensor:
-    if validation_audio is None:
+    """
+        Prepare a fixed-length audio tensor for validation.
+        
+        If `validation_audio` is None, returns a random float32 tensor of shape (1, max_samples); if `seed` is provided the RNG is seeded before generation. If `validation_audio` is a path, loads the file, verifies its sample rate matches `sample_rate`, converts multi-channel audio to mono by taking the first channel, and pads or truncates to exactly `max_samples`. Raises `typer.BadParameter` when the file's sample rate does not match or the audio is empty.
+        
+        Parameters:
+            validation_audio (Optional[Path]): Path to an audio file to use for validation, or None to generate random audio.
+            sample_rate (int): Expected sample rate of the validation audio.
+            max_samples (int): Number of audio samples in the returned tensor (length along axis 1).
+            seed (Optional[int]): Optional random seed used only when generating synthetic audio.
+        
+        Returns:
+            torch.Tensor: A float32 tensor with shape (1, max_samples) containing the prepared audio.
+        """
+        if validation_audio is None:
         if seed is not None:
             torch.manual_seed(seed)
         audio = torch.randn(1, max_samples, dtype=torch.float32)
@@ -285,6 +451,16 @@ def _prepare_audio(
 
 def _save_mlpackage(model: ct.models.MLModel, path: Path, description: str) -> None:
     # Ensure iOS 17+ target for MLProgram ops and ANE readiness
+    """
+    Save a Core ML model to the given path and embed basic package metadata.
+    
+    Attempts to set the model's minimum deployment target to iOS 17, sets the model's short description and author, creates parent directories as needed, and writes the model to disk at the provided path.
+    
+    Parameters:
+        model (ct.models.MLModel): Core ML model to save.
+        path (Path): Filesystem path where the mlpackage will be written.
+        description (str): Short description to embed in the model metadata.
+    """
     try:
         model.minimum_deployment_target = ct.target.iOS17
     except Exception:
@@ -296,12 +472,28 @@ def _save_mlpackage(model: ct.models.MLModel, path: Path, description: str) -> N
 
 
 def _tensor_shape(tensor: torch.Tensor) -> Tuple[int, ...]:
+    """
+    Return the shape of a tensor as a tuple of Python ints.
+    
+    Returns:
+        shape (Tuple[int, ...]): The tensor's dimensions as native Python int values.
+    """
     return tuple(int(dim) for dim in tensor.shape)
 
 
 def _parse_compute_units(name: str) -> ct.ComputeUnit:
-    """Parse a human-friendly compute units string into ct.ComputeUnit.
-    Accepted (case-insensitive): ALL, CPU_ONLY, CPU_AND_GPU, CPU_AND_NE.
+    """
+    Convert a human-friendly compute units name to the corresponding `ct.ComputeUnit` enum.
+    
+    Parameters:
+        name (str): Compute units name (case-insensitive). Accepted values: "ALL", "CPU_ONLY",
+            "CPU_AND_GPU", "CPU_AND_NE", "CPU_AND_NEURALENGINE".
+    
+    Returns:
+        ct.ComputeUnit: The matching CoreMLTools compute unit enum.
+    
+    Raises:
+        typer.BadParameter: If `name` is not one of the accepted values.
     """
     normalized = str(name).strip().upper()
     mapping = {
@@ -319,8 +511,18 @@ def _parse_compute_units(name: str) -> ct.ComputeUnit:
 
 
 def _parse_compute_precision(name: Optional[str]) -> Optional[ct.precision]:
-    """Parse compute precision string into ct.precision or None.
-    Accepted (case-insensitive): FLOAT32, FLOAT16. If None/empty, returns None (tool default).
+    """
+    Parse a human-friendly compute precision name into a Core ML precision enum.
+    
+    Parameters:
+        name (Optional[str]): Precision name accepted case-insensitively: "FLOAT32" or "FLOAT16".
+            If `None` or empty string, the function returns `None` to indicate the tool default.
+    
+    Returns:
+        Optional[ct.precision]: The corresponding `ct.precision` value, or `None` if no precision was specified.
+    
+    Raises:
+        typer.BadParameter: If `name` is not one of the accepted precision identifiers.
     """
     if name is None:
         return None
@@ -401,7 +603,27 @@ def convert(
             help="Export precision: FLOAT32 (default) or FLOAT16 to shrink non-quantized weights.",
         ),
 ) -> None:
-    """Export all Parakeet sub-modules to CoreML with a fixed 15-second window."""
+    """
+        Export Parakeet TDT v3 sub-modules to CoreML artifacts using a fixed 15-second audio window.
+        
+        Converts and saves per-component CoreML `.mlpackage` files (preprocessor, encoder, fused mel+encoder, decoder,
+        joint, joint decision head, single-step joint decision) and a metadata.json manifest into `output_dir`.
+        If `--nemo-path` is provided, the model is loaded from that .nemo checkpoint; otherwise `--model-id` is used to
+        download a pretrained NeMo model. Per-component compute units and an optional compute precision can be specified.
+        
+        Parameters:
+            nemo_path (Optional[Path]): Local .nemo checkpoint path to load instead of downloading a pretrained model.
+            model_id (str): Identifier to download the pretrained NeMo model when `nemo_path` is omitted.
+            output_dir (Path): Directory where generated `.mlpackage` files and `metadata.json` will be written.
+            preprocessor_cu (str): Compute unit name for the preprocessor component (ALL, CPU_ONLY, CPU_AND_GPU, CPU_AND_NE).
+            mel_encoder_cu (str): Compute unit name for the fused mel+encoder component.
+            encoder_cu (str): Compute unit name for the standalone encoder component.
+            decoder_cu (str): Compute unit name for the decoder (prediction network) component.
+            joint_cu (str): Compute unit name for the joint network component.
+            joint_decision_cu (str): Compute unit name for the joint+decision head component.
+            joint_decision_single_step_cu (str): Compute unit name for the single-step joint decision component.
+            compute_precision (Optional[str]): Export precision, either "FLOAT32" (default) or "FLOAT16" to reduce weight size.
+        """
     # Runtime CoreML contract keeps U=1 so the prediction net matches the streaming decoder.
     export_settings = ExportSettings(
         output_dir=output_dir,
