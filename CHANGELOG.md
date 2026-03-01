@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0a1](https://github.com/TigreGotico/ovos-stt-plugin-coreml/tree/0.2.0a1) (2026-03-01)
+
+[Full Changelog](https://github.com/TigreGotico/ovos-stt-plugin-coreml/compare/0.1.0a1...0.2.0a1)
+
+**Merged pull requests:**
+
+- feat: implement dual CTC/TDT model support [\#3](https://github.com/TigreGotico/ovos-stt-plugin-coreml/pull/3) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [0.1.0a1](https://github.com/TigreGotico/ovos-stt-plugin-coreml/tree/0.1.0a1) (2026-03-01)
 
 [Full Changelog](https://github.com/TigreGotico/ovos-stt-plugin-coreml/compare/0.0.2...0.1.0a1)
