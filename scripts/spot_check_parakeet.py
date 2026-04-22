@@ -31,8 +31,57 @@ import typer
 app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
 
 REPOS_ROOT = Path("/Volumes/hdd/models/hf-repos")
-DEFAULT_AUDIO = Path(__file__).parent / "yc_first_minute_16k_15s.wav"
+DEFAULT_AUDIO_DIR = Path(__file__).parent / "test_audio"
 SAMPLE_RATE = 16_000
+
+# Map ISO 639-1 code → audio filename inside the audio dir.
+# Run scripts/download_test_audio.py once to populate test_audio/.
+_LANG_AUDIO: dict[str, str] = {
+    "en": "en.wav",
+    "ja": "ja.wav",
+    "vi": "vi.wav",
+    "da": "da.wav",
+    "nl": "nl.wav",
+    "et": "et.wav",
+    "pl": "pl.wav",
+    "pt": "pt.wav",
+    "sl": "sl.wav",
+}
+
+# Slug suffix → ISO 639-1 code (used when metadata.language is empty)
+_SLUG_LANG: dict[str, str] = {
+    "-ja":         "ja",
+    "-vi":         "vi",
+    "-da":         "da",
+    "-dutch":      "nl",
+    "-estonian":   "et",
+    "-polish":     "pl",
+    "-portuguese": "pt",
+    "-slovenian":  "sl",
+}
+
+
+def _detect_language(meta: dict, repo_name: str) -> str:
+    """Return ISO 639-1 code from metadata or repo slug."""
+    lang = (meta.get("language") or "").strip().lower()
+    if lang:
+        return lang.split("-")[0].split("_")[0]
+    name = repo_name.lower()
+    for suffix, code in _SLUG_LANG.items():
+        if suffix in name:
+            return code
+    return "en"
+
+
+def _select_audio(lang: str, audio_dir: Path) -> Optional[Path]:
+    """Return the language-appropriate audio file, falling back to English."""
+    filename = _LANG_AUDIO.get(lang, _LANG_AUDIO["en"])
+    p = audio_dir / filename
+    if p.exists():
+        return p
+    # Fallback: try English
+    en = audio_dir / _LANG_AUDIO["en"]
+    return en if en.exists() else None
 
 # ── PyObjC CoreML backend ─────────────────────────────────────────────────────
 try:
@@ -232,8 +281,15 @@ def _decode_tdt(encoder: np.ndarray, encoder_length: np.ndarray,
 
 # ── Repo check ────────────────────────────────────────────────────────────────
 
-def _check_repo(repo_dir: Path, audio_path: Path) -> Optional[str]:
-    """Return transcript string, or None if repo is not ready."""
+def _check_repo(repo_dir: Path, audio_dir: Optional[Path] = None,
+                audio_override: Optional[Path] = None) -> Optional[str]:
+    """Return transcript string, or None if repo is not ready.
+
+    Audio selection priority:
+      1. audio_override (--audio CLI flag) — same file for every model
+      2. Language-matched file from audio_dir (e.g. test_audio/pl.wav)
+      3. test_audio/en.wav fallback
+    """
     meta_path = repo_dir / "metadata.json"
     vocab_path = repo_dir / "vocab.json"
 
@@ -248,6 +304,19 @@ def _check_repo(repo_dir: Path, audio_path: Path) -> Optional[str]:
         if not ml_path.exists():
             return None
 
+    # Resolve audio file
+    if audio_override is not None:
+        audio_path = audio_override
+    else:
+        adir = audio_dir or DEFAULT_AUDIO_DIR
+        lang = _detect_language(meta, repo_dir.name)
+        resolved = _select_audio(lang, adir)
+        if resolved is None:
+            raise FileNotFoundError(
+                f"No audio file found in {adir}. Run scripts/download_test_audio.py first."
+            )
+        audio_path = resolved
+
     vocab = json.loads(vocab_path.read_text())
     max_samples = meta["max_audio_samples"]
     audio_signal, audio_length = _load_audio(audio_path, max_samples)
@@ -258,15 +327,8 @@ def _check_repo(repo_dir: Path, audio_path: Path) -> Optional[str]:
     encoder = enc_out["encoder"]
     enc_len = enc_out["encoder_length"]
 
-    if "ctc_decoder" in components:
-        ctc = _load_model(str(repo_dir / components["ctc_decoder"]["path"]),
-                          ct.ComputeUnit.ALL)
-        enc_T = int(enc_len.flat[0])
-        log_probs = ctc.predict({"encoder": encoder[:, :, :enc_T]})["log_probs"]
-        blank_id = meta.get("blank_id", meta.get("vocab_size", len(vocab)))
-        return _decode_ctc(log_probs, vocab, blank_id)
-
-    elif "joint_decision_single_step" in components and "decoder" in components:
+    # Prefer TDT/RNNT path — lower WER than CTC head (even for hybrid TDT-CTC models)
+    if "joint_decision_single_step" in components and "decoder" in components:
         blank_id = meta.get("blank_id", meta.get("vocab_size", len(vocab)))
         dec_inputs = components["decoder"]["inputs"]
         h_shape = tuple(dec_inputs["h_in"])
@@ -279,6 +341,14 @@ def _check_repo(repo_dir: Path, audio_path: Path) -> Optional[str]:
         return _decode_tdt(encoder, enc_len, dec_model, joint_model, vocab, blank_id,
                            h_shape, c_shape, duration_bins=duration_bins)
 
+    if "ctc_decoder" in components:
+        ctc = _load_model(str(repo_dir / components["ctc_decoder"]["path"]),
+                          ct.ComputeUnit.ALL)
+        enc_T = int(enc_len.flat[0])
+        log_probs = ctc.predict({"encoder": encoder[:, :, :enc_T]})["log_probs"]
+        blank_id = meta.get("blank_id", meta.get("vocab_size", len(vocab)))
+        return _decode_ctc(log_probs, vocab, blank_id)
+
     return None
 
 
@@ -287,12 +357,20 @@ def _check_repo(repo_dir: Path, audio_path: Path) -> Optional[str]:
 @app.command()
 def spot_check(
     repos_root: Path = typer.Option(REPOS_ROOT, "--repos-root"),
-    audio: Path = typer.Option(DEFAULT_AUDIO, "--audio"),
+    audio: Optional[Path] = typer.Option(None, "--audio",
+        help="Use this audio file for ALL models (overrides per-language selection)."),
+    audio_dir: Path = typer.Option(DEFAULT_AUDIO_DIR, "--audio-dir",
+        help="Directory with per-language audio files (en.wav, pl.wav, …). "
+             "Run download_test_audio.py to populate."),
     pattern: str = typer.Option("parakeet-*-coreml*", "--pattern"),
     stop_on_error: bool = typer.Option(False, "--stop-on-error"),
 ) -> None:
-    """Run inference on all available converted Parakeet CoreML repos."""
-    if not audio.exists():
+    """Run inference on all available converted Parakeet CoreML repos.
+
+    Audio is selected per model based on the language in metadata.json.
+    Use --audio to override with a single file for all models.
+    """
+    if audio is not None and not audio.exists():
         raise typer.BadParameter(f"Audio file not found: {audio}")
 
     backend = "PyObjC/CoreML (ANE)" if _PYOBJC else "coremltools (CPU)"
@@ -309,7 +387,7 @@ def spot_check(
         name = repo_dir.name
         try:
             t0 = time.perf_counter()
-            result = _check_repo(repo_dir, audio)
+            result = _check_repo(repo_dir, audio_dir=audio_dir, audio_override=audio)
             elapsed = time.perf_counter() - t0
 
             if result is None:

@@ -150,13 +150,15 @@ class CoremlSTT(STT):
 
     Supports three model families detected automatically from metadata.json:
 
-      • ctc  – Pure CTC (EncDecCTCModelBPE) or Hybrid RNNT-CTC (EncDecHybridRNNTCTCBPEModel)
+      • ctc  – Pure CTC (EncDecCTCModelBPE)
                Pipeline: mel_encoder → ctc_decoder → log_probs → greedy / beam search
-               model_type in metadata: "ctc" or "parakeet_tdt_rnnt" (hybrid)
+               model_type in metadata: "ctc"
 
       • tdt  – TDT (Token-and-Duration Transducer, EncDecRNNTBPEModel with num_extra > 0)
                Pipeline: mel_encoder (once) → per-frame decoder + joint decision step
                Duration output drives frame advancement.
+               Also covers hybrid TDT-CTC models (parakeet-tdt-ctc-*): TDT path is
+               preferred because it gives significantly lower WER than the CTC head.
                model_type in metadata: "parakeet_tdt_rnnt"
 
       • rnnt – Pure RNNT (EncDecRNNTBPEModel with num_extra == 0)
@@ -165,13 +167,15 @@ class CoremlSTT(STT):
 
     Detection logic (checked in order):
       1. config["model_type"] = "ctc" or "tdt" — explicit override
-      2. "ctc_decoder" in metadata components → ctc (covers pure CTC and hybrid)
-      3. "joint_decision_single_step" in metadata components → tdt (covers TDT and RNNT)
-      4. "blank_id" in metadata top-level → ctc (legacy fallback)
-      5. Default: ctc
+      2. Both "joint_decision_single_step" AND "ctc_decoder" in components → tdt
+         (hybrid TDT-CTC models; TDT path preferred for transcription accuracy)
+      3. "joint_decision_single_step" in components only → tdt
+      4. "ctc_decoder" in components only → ctc
+      5. "blank_id" in metadata top-level → ctc (legacy fallback)
+      6. Default: ctc
 
-    Note: hybrid models have both ctc_decoder and RNNT components; CTC path is chosen
-    (simpler and faster). Use config["model_type"] = "tdt" to force RNNT path if needed.
+    Note: use config["model_type"] = "ctc" to force the CTC head on a hybrid model
+    (useful for keyword-spotting / constrained decoding applications).
 
     Explicit config (all paths set manually — metadata still required for
     sample_rate / max_audio_samples):
@@ -305,12 +309,14 @@ class CoremlSTT(STT):
         if explicit := self.config.get("model_type"):
             return explicit.lower().strip()
         components = self.meta.get("components", {})
-        # CTC decoder present → use CTC path (covers pure CTC and hybrid RNNT-CTC)
-        if "ctc_decoder" in components:
-            return "ctc"
-        # RNNT joint present without CTC decoder → TDT or pure RNNT decoding loop
-        if "joint_decision_single_step" in components:
+        has_tdt = "joint_decision_single_step" in components
+        has_ctc = "ctc_decoder" in components
+        # TDT (or hybrid TDT-CTC): prefer TDT path — it gives lower WER than CTC head
+        if has_tdt:
             return "tdt"
+        # Pure CTC
+        if has_ctc:
+            return "ctc"
         # Legacy CTC metadata (older format, no components section)
         if "blank_id" in self.meta:
             return "ctc"

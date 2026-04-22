@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 HF_ORG="${OVOS_COREML_HF_ORG:-OpenVoiceOS}"
 PYTHON="${OVOS_COREML_PYTHON:-$(command -v python3 || command -v python)}"
-TRACE_AUDIO="${OVOS_COREML_AUDIO:-${SCRIPT_DIR}/yc_first_minute_16k_15s.wav}"
+TRACE_AUDIO="${OVOS_COREML_AUDIO:-${SCRIPT_DIR}/test_audio/en.wav}"
 VALIDATE_DIR="${OVOS_COREML_VALIDATE_DIR:-/tmp/ovos-coreml-validate}"
 MAX_PARALLEL=3
 PATTERN="*"
