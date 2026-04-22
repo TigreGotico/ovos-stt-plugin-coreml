@@ -113,8 +113,23 @@ if text is None or text == "":
 print(text[:120])
 PYEOF
 
+    # Resolve language-appropriate audio (fall back to TRACE_AUDIO if file missing)
+    local audio_path="${TRACE_AUDIO}"
+    local audio_dir="${SCRIPT_DIR}/test_audio"
+    case "${repo_name}" in
+        *-vi-coreml*)         audio_path="${audio_dir}/vi.wav" ;;
+        *-ja-coreml*)         audio_path="${audio_dir}/ja.wav" ;;
+        *-da-coreml*)         audio_path="${audio_dir}/da.wav" ;;
+        *-dutch-coreml*)      audio_path="${audio_dir}/nl.wav" ;;
+        *-estonian-coreml*)   audio_path="${audio_dir}/et.wav" ;;
+        *-polish-coreml*)     audio_path="${audio_dir}/pl.wav" ;;
+        *-portuguese-coreml*) audio_path="${audio_dir}/pt.wav" ;;
+        *-slovenian-coreml*)  audio_path="${audio_dir}/sl.wav" ;;
+    esac
+    [ -f "${audio_path}" ] || audio_path="${TRACE_AUDIO}"
+
     local check_out
-    check_out=$("${PYTHON}" "${py_script}" "${dir}/metadata.json" "${TRACE_AUDIO}" 2>/dev/null)
+    check_out=$("${PYTHON}" "${py_script}" "${dir}/metadata.json" "${audio_path}" 2>/dev/null)
     local rc=$?
     rm -f "${py_script}"
 
@@ -130,7 +145,7 @@ PYEOF
 }
 
 export -f _validate_one _hf_repo_exists
-export HF_ORG PYTHON TRACE_AUDIO VALIDATE_DIR
+export HF_ORG PYTHON TRACE_AUDIO VALIDATE_DIR SCRIPT_DIR
 
 # ── Run in parallel ───────────────────────────────────────────────────────────
 

@@ -297,7 +297,10 @@ def convert(
     mel_encoder_cu: str = typer.Option("ALL", "--mel-encoder-cu"),
     joint_cu: str = typer.Option("ALL", "--joint-cu"),
     ctc_cu: str = typer.Option("ALL", "--ctc-cu"),
-    compute_precision: Optional[str] = typer.Option(None, "--compute-precision"),
+    compute_precision: Optional[str] = typer.Option(
+        "FLOAT32", "--compute-precision",
+        help="Export precision: FLOAT32 (default, required for 0.6b conformer — FP16 causes NaN with real audio) or FLOAT16",
+    ),
     ctc_only: bool = typer.Option(False, "--ctc-only",
         help="Export only the CTC head (faster RTF, higher WER). Ignored for pure CTC/TDT models."),
     language: str = typer.Option("", "--language", help="Language code stored in metadata."),

@@ -219,9 +219,9 @@ def convert(
         help="Compute units for conversion: ALL, CPU_ONLY, CPU_AND_GPU, CPU_AND_NE",
     ),
     compute_precision: Optional[str] = typer.Option(
-        None,
+        "FLOAT32",
         "--compute-precision",
-        help="Export precision override: FLOAT32 (default) or FLOAT16",
+        help="Export precision: FLOAT32 (default, required for 0.6b conformer — FP16 causes NaN with real audio) or FLOAT16",
     ),
 ) -> None:
     """Export fused Mel+Encoder+CTC CoreML model (waveform -> log_probs)."""
