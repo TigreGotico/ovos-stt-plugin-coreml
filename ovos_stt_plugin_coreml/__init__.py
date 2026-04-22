@@ -1,6 +1,7 @@
 import json
+import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import coremltools as ct
 import numpy as np
@@ -10,24 +11,167 @@ from ovos_utils import classproperty
 
 from ovos_stt_plugin_coreml.lm import ARPALanguageModel, ctc_beam_search
 
+# ── PyObjC CoreML backend (ANE dispatch) ─────────────────────────────────────
+# When pyobjc-framework-CoreML is installed, models are loaded and run through
+# the native CoreML Objective-C framework, which properly dispatches to ANE/GPU.
+# Falls back to coremltools if PyObjC is not available.
+try:
+    import CoreML as _CoreML
+    from Foundation import NSURL as _NSURL
+    _PYOBJC = True
+except ImportError:
+    _PYOBJC = False
+
+
+def _compile_mlpackage(mlpackage_path: str) -> str:
+    """Compile a .mlpackage to .mlmodelc (cached alongside the package).
+
+    Uses coremltools' compile_model which invokes the system CoreML compiler.
+    The .mlmodelc is stored next to the .mlpackage so it persists across runs.
+    """
+    pkg = Path(mlpackage_path)
+    out = pkg.parent / (pkg.stem + ".mlmodelc")
+    if not out.exists():
+        tmp = ct.utils.compile_model(str(pkg))
+        shutil.move(tmp, str(out))
+    return str(out)
+
+
+def _load_model(mlpackage_path: str, compute_units: ct.ComputeUnit) -> Any:
+    """Load a CoreML model.
+
+    With PyObjC available: compiles to .mlmodelc and loads through the native
+    CoreML ObjC framework for ANE/GPU dispatch.
+    Without PyObjC: loads .mlpackage directly via coremltools.
+    """
+    if _PYOBJC:
+        mlmodelc = _compile_mlpackage(mlpackage_path)
+        _cu_map = {
+            ct.ComputeUnit.ALL: _CoreML.MLComputeUnitsAll,
+            ct.ComputeUnit.CPU_ONLY: _CoreML.MLComputeUnitsCPUOnly,
+            ct.ComputeUnit.CPU_AND_GPU: _CoreML.MLComputeUnitsCPUAndGPU,
+            ct.ComputeUnit.CPU_AND_NE: _CoreML.MLComputeUnitsCPUAndNeuralEngine,
+        }
+        config = _CoreML.MLModelConfiguration.alloc().init()
+        config.setComputeUnits_(_cu_map[compute_units])
+        model, err = _CoreML.MLModel.modelWithContentsOfURL_configuration_error_(
+            _NSURL.fileURLWithPath_(mlmodelc), config, None
+        )
+        if err or model is None:
+            raise RuntimeError(f"CoreML load failed for {mlmodelc}: {err}")
+        return _ObjCModel(model)
+    # No PyObjC — load .mlpackage directly via coremltools
+    return ct.models.MLModel(mlpackage_path, compute_units=compute_units)
+
+
+class _ObjCModel:
+    """Thin wrapper around an ObjC MLModel that exposes a coremltools-compatible
+    predict(dict) → dict interface, bridging numpy ↔ MLMultiArray."""
+
+    def __init__(self, objc_model: Any) -> None:
+        self._m = objc_model
+
+    def predict(self, inputs: dict) -> dict:
+        import ctypes
+
+        def _to_mlarray(arr: np.ndarray) -> Any:
+            arr = np.ascontiguousarray(arr)
+            _dtype_map = {
+                np.dtype("float32"): _CoreML.MLMultiArrayDataTypeFloat32,
+                np.dtype("float16"): _CoreML.MLMultiArrayDataTypeFloat16,
+                np.dtype("int32"):   _CoreML.MLMultiArrayDataTypeInt32,
+            }
+            ml_dtype = _dtype_map[arr.dtype]
+            strides = [s // arr.itemsize for s in arr.strides]
+            c_ptr = arr.ctypes.data_as(ctypes.c_void_p)
+            ml_arr, err = _CoreML.MLMultiArray.alloc(
+            ).initWithDataPointer_shape_dataType_strides_deallocator_error_(
+                c_ptr, list(arr.shape), ml_dtype, strides, None, None
+            )
+            if err:
+                raise RuntimeError(f"MLMultiArray init failed: {err}")
+            return ml_arr, arr  # return arr to keep it alive
+
+        def _from_mlarray(ml_arr: Any) -> np.ndarray:
+            shape = tuple(int(d) for d in ml_arr.shape())
+            total = 1
+            for d in shape:
+                total *= d
+            _dtype_info = {
+                _CoreML.MLMultiArrayDataTypeFloat32: (np.float32, 4),
+                _CoreML.MLMultiArrayDataTypeFloat16: (np.float16, 2),
+                _CoreML.MLMultiArrayDataTypeInt32:   (np.int32,   4),
+            }
+            np_dtype, itemsize = _dtype_info.get(ml_arr.dataType(), (np.float32, 4))
+            # Fast path: read raw bytes via data pointer (zero-copy where supported)
+            try:
+                ptr = ml_arr.dataPointer()
+                addr = ptr if isinstance(ptr, int) else int(ptr)
+                buf = ctypes.string_at(addr, total * itemsize)
+                return np.frombuffer(buf, dtype=np_dtype).reshape(shape).copy()
+            except Exception:
+                pass
+            # Fallback: element-wise (safe on all PyObjC versions, O(n) Python)
+            flat = np.empty(total, dtype=np_dtype)
+            for i in range(total):
+                flat[i] = ml_arr[i]
+            return flat.reshape(shape)
+
+        # Build input feature provider
+        feat_dict = {}
+        refs = []  # keep numpy arrays alive while ObjC holds pointers
+        for name, arr in inputs.items():
+            ml_arr, ref = _to_mlarray(arr)
+            feat_dict[name] = _CoreML.MLFeatureValue.featureValueWithMultiArray_(ml_arr)
+            refs.append(ref)
+
+        provider, err = _CoreML.MLDictionaryFeatureProvider.alloc(
+        ).initWithDictionary_error_(feat_dict, None)
+        if err:
+            raise RuntimeError(f"MLDictionaryFeatureProvider failed: {err}")
+
+        result, err = self._m.predictionFromFeatures_error_(provider, None)
+        if err:
+            raise RuntimeError(f"CoreML prediction failed: {err}")
+
+        # Extract outputs
+        outputs = {}
+        for name in result.featureNames():
+            fv = result.featureValueForName_(name)
+            if fv is not None:
+                ml_arr = fv.multiArrayValue()
+                if ml_arr is not None:
+                    outputs[str(name)] = _from_mlarray(ml_arr)
+        return outputs
+
 
 class CoremlSTT(STT):
     """Generic OVOS STT plugin for CoreML-exported speech recognition models.
 
-    Supports two model families detected automatically from metadata.json:
+    Supports three model families detected automatically from metadata.json:
 
-      • ctc  – Parakeet CTC / Hybrid RNNT-CTC (EncDecHybridRNNTCTCBPEModel)
+      • ctc  – Pure CTC (EncDecCTCModelBPE) or Hybrid RNNT-CTC (EncDecHybridRNNTCTCBPEModel)
                Pipeline: mel_encoder → ctc_decoder → log_probs → greedy / beam search
+               model_type in metadata: "ctc" or "parakeet_tdt_rnnt" (hybrid)
 
-      • tdt  – Parakeet TDT v3 pure RNNT (EncDecRNNTBPEModel)
+      • tdt  – TDT (Token-and-Duration Transducer, EncDecRNNTBPEModel with num_extra > 0)
                Pipeline: mel_encoder (once) → per-frame decoder + joint decision step
+               Duration output drives frame advancement.
+               model_type in metadata: "parakeet_tdt_rnnt"
+
+      • rnnt – Pure RNNT (EncDecRNNTBPEModel with num_extra == 0)
+               Same pipeline as TDT but duration is always 0; decoder re-runs until blank.
+               model_type in metadata: "parakeet_rnnt"
 
     Detection logic (checked in order):
       1. config["model_type"] = "ctc" or "tdt" — explicit override
-      2. "ctc_decoder" in metadata components → ctc
-      3. "joint"       in metadata components → tdt
-      4. "blank_id"    in metadata top-level  → ctc  (legacy CTC metadata)
+      2. "ctc_decoder" in metadata components → ctc (covers pure CTC and hybrid)
+      3. "joint_decision_single_step" in metadata components → tdt (covers TDT and RNNT)
+      4. "blank_id" in metadata top-level → ctc (legacy fallback)
       5. Default: ctc
+
+    Note: hybrid models have both ctc_decoder and RNNT components; CTC path is chosen
+    (simpler and faster). Use config["model_type"] = "tdt" to force RNNT path if needed.
 
     Explicit config (all paths set manually — metadata still required for
     sample_rate / max_audio_samples):
@@ -59,10 +203,18 @@ class CoremlSTT(STT):
 
         {"metadata": "/path/to/parakeet_coreml/metadata.json"}
 
+    Auto-download from HuggingFace Hub — set repo_id instead of metadata:
+
+        {"repo_id": "OpenVoiceOS/parakeet-tdt-0.6b-v2-coreml"}
+
+    The model is cached in ~/.cache/huggingface/hub (shared with transformers).
+    Requires: pip install huggingface-hub
+
     Full config reference:
 
       Common:
-        metadata    (required) – path to metadata.json
+        repo_id     (optional) – HF repo id; auto-downloads when metadata is absent
+        metadata    (required unless repo_id set) – path to metadata.json
         model_type  (optional) – "ctc" or "tdt"; auto-detected when omitted
         vocab       (optional) – path to vocab.json; defaults to <metadata_dir>/vocab.json
         encoder     (optional) – path to mel_encoder .mlpackage
@@ -82,12 +234,9 @@ class CoremlSTT(STT):
     # ── Initialisation ────────────────────────────────────────────────────────
 
     def __init__(self, *args, **kwargs):
-        """
-        Initialize the CoremlSTT instance by loading model metadata and vocabulary and initializing the model-specific components.
-        
-        Loads metadata from the path in self.config["metadata"] and sets SAMPLE_RATE and MAX_SAMPLES, establishes _model_dir for resolving relative model files, determines model_type via _detect_model_type(), loads the vocabulary from an explicit config path (self.config["vocab"]) or from <model_dir>/vocab.json, and then initializes either the TDT or CTC runtime by calling _init_tdt() or _init_ctc().
-        """
         super().__init__(*args, **kwargs)
+
+        self._maybe_download_from_hub()
 
         with open(self.config["metadata"]) as f:
             self.meta = json.load(f)
@@ -101,6 +250,16 @@ class CoremlSTT(STT):
         # Auto-detect model type from metadata structure
         self.model_type: str = self._detect_model_type()
 
+        # Compute units: "all" (default, ANE/GPU), "cpu_only", "cpu_and_gpu", "cpu_and_ne"
+        _cu_map = {
+            "all":         ct.ComputeUnit.ALL,
+            "cpu_only":    ct.ComputeUnit.CPU_ONLY,
+            "cpu_and_gpu": ct.ComputeUnit.CPU_AND_GPU,
+            "cpu_and_ne":  ct.ComputeUnit.CPU_AND_NE,
+        }
+        cu_cfg = str(self.config.get("compute_units", "all")).lower().replace("-", "_")
+        self._default_cu: ct.ComputeUnit = _cu_map.get(cu_cfg, ct.ComputeUnit.ALL)
+
         # Vocab: explicit path > <model_dir>/vocab.json
         vocab_path = self.config.get("vocab") or str(self._model_dir / "vocab.json")
         with open(vocab_path) as f:
@@ -111,41 +270,52 @@ class CoremlSTT(STT):
         else:
             self._init_ctc()
 
+    def _maybe_download_from_hub(self) -> None:
+        """Download model snapshot from HuggingFace Hub when repo_id is configured.
+
+        Triggered only when ``repo_id`` is set and ``metadata`` is absent.
+        Uses the standard HF Hub cache (``~/.cache/huggingface/hub`` by default,
+        respects ``HF_HOME`` / ``HUGGINGFACE_HUB_CACHE`` env vars), so the
+        download is shared with transformers and other HF tooling.
+
+        Raises ``ImportError`` if ``huggingface_hub`` is not installed.
+        """
+        repo_id = self.config.get("repo_id")
+        if not repo_id or self.config.get("metadata"):
+            return
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError:
+            raise ImportError(
+                "huggingface_hub is required for HF auto-download. "
+                "Install it with: pip install huggingface-hub"
+            )
+        local_dir = snapshot_download(repo_id=repo_id, repo_type="model")
+        self.config["metadata"] = str(Path(local_dir) / "metadata.json")
+
     def _detect_model_type(self) -> str:
-        """
-        Determine the model family used by the loaded CoreML assets.
-        
-        Checks for an explicit `model_type` in the instance config first; if absent, inspects metadata components and keys to infer either "ctc" or "tdt". The resolution order is: explicit config, presence of `ctc_decoder` (-> "ctc"), presence of `joint` or `joint_extra_outputs` (-> "tdt"), presence of `blank_id` (-> "ctc"), then defaults to "ctc".
-        
-        Returns:
-            str: `"ctc"` or `"tdt"` indicating the detected model type.
-        """
+        """Infer model type from config or metadata structure."""
         if explicit := self.config.get("model_type"):
             return explicit.lower().strip()
         components = self.meta.get("components", {})
+        # CTC decoder present → use CTC path (covers pure CTC and hybrid RNNT-CTC)
         if "ctc_decoder" in components:
             return "ctc"
-        if "joint" in components or "joint_extra_outputs" in self.meta:
+        # RNNT joint present without CTC decoder → TDT or pure RNNT decoding loop
+        if "joint_decision_single_step" in components:
             return "tdt"
+        # Legacy CTC metadata (older format, no components section)
         if "blank_id" in self.meta:
             return "ctc"
         return "ctc"
 
     def _resolve(self, config_key: str, component_name: str) -> str:
-        """
-        Resolve and return a filesystem path for a named model component.
-        
-        Attempts resolution in the following order: 1) return the explicit path string found at `self.config[config_key]` if present; 2) return the path from `self.meta["components"][component_name]["path"]` resolved against `self._model_dir`; 3) raise ValueError if neither source provides a path.
-        
-        Parameters:
-            config_key (str): Configuration key to check for an explicit component path.
-            component_name (str): Component name to look up in metadata's `components` mapping.
-        
-        Returns:
-            str: Resolved filesystem path for the requested component.
-        
-        Raises:
-            ValueError: If the component path cannot be resolved from either config or metadata.
+        """Resolve a component path.
+
+        Priority:
+          1. Explicit value in self.config
+          2. <model_dir>/<components[component_name]["path"]> from metadata
+          3. ValueError
         """
         if path := self.config.get(config_key):
             return path
@@ -159,22 +329,12 @@ class CoremlSTT(STT):
 
     def _init_ctc(self) -> None:
         # blank_id: CTC metadata stores it explicitly; TDT-flavoured hybrid uses vocab_size
-        """
-        Initialize components and configuration for a CTC-based model variant.
-        
-        Loads the mel encoder and CTC decoder CoreML models, optionally loads an ARPA language model if configured, and sets related decoding parameters and attributes on the instance. The following attributes are established:
-        - BLANK_ID: blank token id from metadata (falls back to vocab_size or 1024).
-        - mel_encoder: loaded CoreML model for feature encoding.
-        - ctc_decoder: loaded CoreML model for CTC decoding.
-        - lm: loaded ARPALanguageModel or None if no LM configured.
-        - lm_weight: language model weight (float).
-        - word_bonus: word insertion bonus (float).
-        - beam_width: beam search width (int).
-        """
         self.BLANK_ID: int = self.meta.get("blank_id", self.meta.get("vocab_size", 1024))
 
-        self.mel_encoder = ct.models.MLModel(self._resolve("encoder", "mel_encoder"))
-        self.ctc_decoder = ct.models.MLModel(self._resolve("decoder", "ctc_decoder"))
+        self.mel_encoder = _load_model(self._resolve("encoder", "mel_encoder"),
+                                       self._default_cu)
+        self.ctc_decoder = _load_model(self._resolve("decoder", "ctc_decoder"),
+                                       self._default_cu)
 
         self.lm: Optional[ARPALanguageModel] = None
         if lm_path := self.config.get("lm"):
@@ -184,18 +344,17 @@ class CoremlSTT(STT):
         self.beam_width: int = int(self.config.get("beam_width", 100))
 
     def _init_tdt(self) -> None:
-        # Blank is always vocab_size for pure RNNT
-        """
-        Initialize TDT (RNN-T / transducer) model components and runtime parameters from metadata and configuration.
-        
-        Sets BLANK_ID to the model vocabulary size, loads the mel encoder, decoder, and joint-step CoreML models using resolved paths, extracts decoder LSTM state shapes from metadata into _h_shape and _c_shape, and configures max_symbols_per_step (default 10) from the instance config.
-        """
-        self.BLANK_ID: int = self.meta["vocab_size"]
+        # blank_id is explicit in metadata for all converted models; fall back to vocab_size
+        self.BLANK_ID: int = self.meta.get("blank_id", self.meta.get("vocab_size", 1024))
 
-        self.mel_encoder = ct.models.MLModel(self._resolve("encoder", "mel_encoder"))
-        self.decoder = ct.models.MLModel(self._resolve("decoder", "decoder"))
-        self.joint_step = ct.models.MLModel(
-            self._resolve("joint_decision_single_step", "joint_decision_single_step")
+        self.mel_encoder = _load_model(self._resolve("encoder", "mel_encoder"),
+                                       self._default_cu)
+        # LSTM decoder: always CPU (autoregressive, not parallelisable on ANE/GPU)
+        self.decoder = _load_model(self._resolve("decoder", "decoder"),
+                                   ct.ComputeUnit.CPU_ONLY)
+        self.joint_step = _load_model(
+            self._resolve("joint_decision_single_step", "joint_decision_single_step"),
+            self._default_cu,
         )
 
         # LSTM state shapes from metadata — no hardcoding
@@ -203,22 +362,15 @@ class CoremlSTT(STT):
         self._h_shape: Tuple[int, ...] = tuple(dec_inputs["h_in"])
         self._c_shape: Tuple[int, ...] = tuple(dec_inputs["c_in"])
 
+        # duration_bins maps argmax index → frame count (standard TDT: [0,1,2,3,4])
+        # None for pure RNNT (duration is always 0, index == value trivially)
+        self._duration_bins: Optional[List[int]] = self.meta.get("duration_bins")
+
         self.max_symbols_per_step: int = int(self.config.get("max_symbols_per_step", 10))
 
     # ── Audio preparation (shared) ────────────────────────────────────────────
 
     def _prepare_audio(self, audio: AudioData) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Convert input audio to the model's fixed-rate, fixed-length float array and its valid length.
-        
-        Parameters:
-            audio (AudioData): Source audio; will be converted to float32 and resampled to the model SAMPLE_RATE.
-        
-        Returns:
-            Tuple[np.ndarray, np.ndarray]:
-                audio_signal: 1-by-N float32 array padded or trimmed to MAX_SAMPLES.
-                audio_length: int32 array containing a single element equal to the valid sample count (min(original length, MAX_SAMPLES)).
-        """
         audio_array = audio.get_np_float32(convert_rate=self.SAMPLE_RATE)
         original_len = len(audio_array)
         if len(audio_array) < self.MAX_SAMPLES:
@@ -232,14 +384,7 @@ class CoremlSTT(STT):
     # ── CTC decoding ──────────────────────────────────────────────────────────
 
     def _decode_ctc(self, encoder_out: np.ndarray) -> str:
-        """
-        Decode CTC encoder outputs into a normalized transcription string.
-        
-        When a language model is configured, performs beam-search decoding using the model's beam/LM weights and word bonus; otherwise performs greedy decoding by collapsing repeated tokens and removing blank tokens. Subword marker '▁' is replaced with a space and the resulting string is trimmed.
-        
-        Returns:
-            decoded (str): The decoded transcription.
-        """
+        """CTC: encoder output → text (greedy or beam search)."""
         dec_out = self.ctc_decoder.predict({"encoder": encoder_out})
         log_probs: np.ndarray = dec_out["log_probs"]        # [1, T, V]
 
@@ -263,26 +408,23 @@ class CoremlSTT(STT):
             prev = t
         return "".join(self.vocab[i] for i in decoded).replace("▁", " ").strip()
 
-    # ── TDT decoding ──────────────────────────────────────────────────────────
+    # ── TDT / RNNT decoding ───────────────────────────────────────────────────
+
+    def _duration_frames(self, dur_idx: int) -> int:
+        """Convert joint duration argmax index → frame count using duration_bins.
+
+        For standard TDT bins [0,1,2,3,4] the index equals the frame count.
+        For pure RNNT, duration is always 0 and bins are absent.
+        """
+        if self._duration_bins:
+            return self._duration_bins[min(dur_idx, len(self._duration_bins) - 1)]
+        return dur_idx
 
     def _decode_tdt(self, encoder: np.ndarray, encoder_length: np.ndarray) -> str:
-        """
-        Perform greedy TDT decoding on encoder outputs and produce a text transcript.
-        
-        Processes encoder frames up to the provided valid frame count using the model's
-        decoder and joint-step predictors. The method emits tokens (skipping the model
-        blank token) and advances frames according to predicted durations, allowing
-        multiple symbols per frame up to `max_symbols_per_step`. Final token ids are
-        mapped through `self.vocab`, the special subword marker `▁` is converted to a
-        space, and the result is stripped of leading/trailing whitespace.
-        
-        Parameters:
-            encoder (np.ndarray): Encoder activations with shape [1, D_enc, T_enc].
-            encoder_length (np.ndarray): Single-element array [1] containing the number
-                of valid encoder frames to decode.
-        
-        Returns:
-            str: Decoded transcript string.
+        """TDT greedy decoding loop.
+
+        encoder:        [1, D_enc, T_enc]
+        encoder_length: [1]  — number of valid frames
         """
         T = int(encoder_length.flat[0])
 
@@ -317,7 +459,8 @@ class CoremlSTT(STT):
                     "decoder_step": dec_feat,
                 })
                 token_id: int = int(jd["token_id"].flat[0])
-                duration: int = int(jd["duration"].flat[0])
+                dur_idx: int = int(jd["duration"].flat[0])
+                duration: int = self._duration_frames(dur_idx)
 
                 if token_id == self.BLANK_ID or symbols_this_frame >= self.max_symbols_per_step:
                     # Blank (or safety cap): advance frame, prev_label unchanged
@@ -354,16 +497,6 @@ class CoremlSTT(STT):
     # ── Public interface ──────────────────────────────────────────────────────
 
     def transcribe(self, audio: AudioData, lang: Optional[str] = None) -> List[Tuple[str, float]]:
-        """
-        Transcribe audio into text using the loaded CoreML model and return a single best transcript with confidence.
-        
-        Parameters:
-            audio (AudioData): Input audio to transcribe; will be resampled and padded/trimmed to the model's expected sample rate and length.
-            lang (Optional[str]): Optional language hint for models that support language selection; ignored if the model does not use it.
-        
-        Returns:
-            transcripts (List[Tuple[str, float]]): A list containing a single tuple of (transcript_text, confidence). The confidence is always 1.0 for the returned transcript.
-        """
         audio_signal, audio_length = self._prepare_audio(audio)
 
         enc_out = self.mel_encoder.predict({
@@ -379,16 +512,6 @@ class CoremlSTT(STT):
         return [(text, 1.0)]
 
     def execute(self, audio, language=None) -> str:
-        """
-        Return the first transcript string produced for the provided audio.
-        
-        Parameters:
-            audio: Audio input to transcribe (format expected by transcribe).
-            language (str, optional): Optional language hint passed to the transcription pipeline.
-        
-        Returns:
-            The top transcription as a string, or an empty string if no transcripts were produced.
-        """
         transcripts = self.transcribe(audio, language)
         return transcripts[0][0] if transcripts else ""
 
@@ -398,14 +521,6 @@ class CoremlSTT(STT):
         # TDT v3 (parakeet-tdt-0.6b-v3) supports 25 European languages with
         # automatic language detection — no language input is needed or accepted.
         # We return the full superset; the loaded model determines actual coverage.
-        """
-        Superset of two-letter language codes that models in this plugin may support.
-        
-        The returned set lists ISO 639-1 language codes potentially supported by available model families; actual language coverage depends on the loaded model (for example, some models are English-only while others provide multilingual support).
-        
-        Returns:
-            languages (set): A set of two-letter ISO 639-1 language codes.
-        """
         return {
             "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk",
             "cs", "ro", "hu", "sv", "fi", "da", "sk", "bg", "hr", "sr",
@@ -418,44 +533,25 @@ ParakeetTDTSTT = CoremlSTT
 
 
 if __name__ == "__main__":
-    import sys
-
-    wav_file = "/Users/tigregotico/PycharmProjects/ovos-stt-plugin-coreml/parakeet_export/yc_first_minute_16k_15s.wav"
-
-    _TDT_DIR = "/Users/tigregotico/PycharmProjects/ovos-stt-plugin-coreml/parakeet_export/parakeet_coreml_quantized/int8_linear"
-
-    configs = {
-        # "CTC greedy": {
-        #     "metadata": "parakeet_ctc_coreml/metadata.json",
-        #     "vocab":    "parakeet_ctc_coreml/vocab.json",
-        #     "encoder":  "parakeet_ctc_coreml/parakeet_ctc_mel_encoder.mlpackage",
-        #     "decoder":  "parakeet_ctc_coreml/parakeet_ctc_decoder.mlpackage",
-        # },
-        # "CTC + LM": {
-        #     "metadata": "parakeet_ctc_coreml/metadata.json",
-        #     "vocab":    "parakeet_ctc_coreml/vocab.json",
-        #     "encoder":  "parakeet_ctc_coreml/parakeet_ctc_mel_encoder.mlpackage",
-        #     "decoder":  "parakeet_ctc_coreml/parakeet_ctc_decoder.mlpackage",
-        #     "lm":         "/path/to/language_model.arpa",
-        #     "lm_weight":  0.3,
-        #     "word_bonus": 1.0,
-        #     "beam_width": 100,
-        # },
-        "TDT": {
-            "metadata": f"{_TDT_DIR}/metadata.json",
-            "vocab":    f"{_TDT_DIR}/vocab.json",
-            "encoder":  f"{_TDT_DIR}/parakeet_mel_encoder.mlpackage",
-            "decoder":  f"{_TDT_DIR}/parakeet_decoder.mlpackage",
-            "joint_decision_single_step": f"{_TDT_DIR}/parakeet_joint_decision_single_step.mlpackage",
-        },
+    config = {
+        "metadata": "/Users/tigregotico/atc_parakeet_ctc/parakeet_ctc_coreml/metadata.json",
+        "vocab": "/Users/tigregotico/atc_parakeet_ctc/parakeet_ctc_coreml/vocab.json",
+        "encoder": "/Users/tigregotico/atc_parakeet_ctc/parakeet_ctc_coreml/parakeet_ctc_mel_encoder.mlpackage",
+        "decoder": "/Users/tigregotico/atc_parakeet_ctc/parakeet_ctc_coreml/parakeet_ctc_decoder.mlpackage",
+        "lm": "/tmp/en-mix.lm",
+        "lm_weight": 0.3,
+        "word_bonus": 1.0,
+        "beam_width": 100,
     }
+    stt = CoremlSTT(config=config)
 
+    wav_file = "/Users/tigregotico/atc_parakeet_ctc/yc_first_minute_16k_15s.wav"
     with AudioFile(wav_file) as f:
         audio = f.read()
 
-    for label, cfg in configs.items():
-        try:
-            stt = CoremlSTT(config=cfg)
-            print(f"{label} ({stt.model_type}): {stt.execute(audio)}")
-        except Exception as exc:
-            print(f"{label}: skipped — {exc}", file=sys.stderr)
+    greedy_config = {**config}
+    del greedy_config["lm"]
+    stt_greedy = CoremlSTT(config=greedy_config)
+
+    print("Greedy:", stt_greedy.execute(audio))
+    print("Beam:  ", stt.execute(audio))
