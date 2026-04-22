@@ -267,20 +267,20 @@ python scripts/quantize_nvidia_parakeet.py \
 
 ### NVIDIA models
 
-| Slug                      | Source model                          | Type      | Languages           |
-|---------------------------|---------------------------------------|-----------|---------------------|
-| parakeet-ctc-0.6b         | nvidia/parakeet-ctc-0.6b              | CTC       | English             |
-| parakeet-ctc-1.1b         | nvidia/parakeet-ctc-1.1b              | CTC       | English             |
-| parakeet-ctc-0.6b-vi      | nvidia/parakeet-ctc-0.6b-Vietnamese   | CTC       | Vietnamese          |
-| parakeet-tdt-ctc-110m     | nvidia/parakeet-tdt_ctc-110m          | Hybrid    | English             |
-| parakeet-tdt-ctc-0.6b-ja  | nvidia/parakeet-tdt_ctc-0.6b-ja       | Hybrid    | Japanese            |
-| parakeet-tdt-0.6b-v2      | nvidia/parakeet-tdt-0.6b-v2           | TDT       | English             |
-| parakeet-tdt-0.6b-v3      | nvidia/parakeet-tdt-0.6b-v3           | TDT       | 25 European (auto)  |
-| parakeet-tdt-1.1b         | nvidia/parakeet-tdt-1.1b              | TDT       | English             |
-| parakeet-rnnt-0.6b        | nvidia/parakeet-rnnt-0.6b             | RNNT      | English             |
-| parakeet-rnnt-1.1b        | nvidia/parakeet-rnnt-1.1b             | RNNT      | English             |
-| parakeet-rnnt-110m-da     | nvidia/parakeet-rnnt-110m-da-dk       | RNNT      | Danish              |
-| parakeet-rnnt-120m-eou    | nvidia/parakeet_realtime_eou_120m-v1  | RNNT      | English (EOU)       |
+| Slug                      | Source model                          | Type      | Languages           | Notes                                 |
+|---------------------------|---------------------------------------|-----------|---------------------|---------------------------------------|
+| parakeet-ctc-0.6b         | nvidia/parakeet-ctc-0.6b              | CTC       | English             |                                       |
+| parakeet-ctc-1.1b         | nvidia/parakeet-ctc-1.1b              | CTC       | English             |                                       |
+| parakeet-ctc-0.6b-vi      | nvidia/parakeet-ctc-0.6b-Vietnamese   | CTC       | Vietnamese          |                                       |
+| parakeet-tdt-ctc-110m     | nvidia/parakeet-tdt_ctc-110m          | Hybrid    | English             |                                       |
+| parakeet-tdt-ctc-0.6b-ja  | nvidia/parakeet-tdt_ctc-0.6b-ja       | Hybrid    | Japanese            |                                       |
+| parakeet-tdt-0.6b-v2      | nvidia/parakeet-tdt-0.6b-v2           | TDT       | English             |                                       |
+| parakeet-tdt-0.6b-v3      | nvidia/parakeet-tdt-0.6b-v3           | TDT       | 25 European (auto)  |                                       |
+| parakeet-tdt-1.1b         | nvidia/parakeet-tdt-1.1b              | TDT       | English             |                                       |
+| parakeet-rnnt-0.6b        | nvidia/parakeet-rnnt-0.6b             | RNNT      | English             | no FP16 variant (NaN in FP16 compute) |
+| parakeet-rnnt-1.1b        | nvidia/parakeet-rnnt-1.1b             | RNNT      | English             |                                       |
+| parakeet-rnnt-110m-da     | nvidia/parakeet-rnnt-110m-da-dk       | RNNT      | Danish              |                                       |
+| parakeet-rnnt-120m-eou    | nvidia/parakeet_realtime_eou_120m-v1  | RNNT      | English (EOU)       | no 4-bit variant                      |
 
 ### Community models
 
@@ -320,6 +320,9 @@ Language is **automatically detected** from the audio — no language input is a
   parallelised.
 - **RNNT models require FLOAT32 compute precision** — some models (e.g. `parakeet-rnnt-0.6b`) produce NaN with the
   default FP16 compute precision; converted models in the HF collection use FLOAT32.
+- **`parakeet-rnnt-0.6b` has no FP16 variant** — FP16 weight compression (`OpFp16Config`) also changes compute
+  ops to float16, which reintroduces the NaN. Since INT8 compression is weight-only (compute stays FLOAT32),
+  the INT8 variant works and is already ~2× smaller. Use `OpenVoiceOS/parakeet-rnnt-0.6b-coreml-int8` instead.
 
 ## License
 
