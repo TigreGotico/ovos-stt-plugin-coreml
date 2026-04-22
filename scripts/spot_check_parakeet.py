@@ -53,10 +53,14 @@ if _PYOBJC:
 
 
 def _compile_mlpackage(mlpackage_path: str) -> str:
-    """Compile .mlpackage → .mlmodelc (cached alongside the package)."""
+    """Compile .mlpackage → .mlmodelc (cached alongside the package).
+
+    Re-compiles if the .mlpackage is newer than the cached .mlmodelc.
+    """
     pkg = Path(mlpackage_path)
     out = pkg.parent / (pkg.stem + ".mlmodelc")
-    if not out.exists():
+    pkg_mtime = pkg.stat().st_mtime
+    if not out.exists() or pkg_mtime > out.stat().st_mtime:
         tmp = ct.utils.compile_model(str(pkg))
         shutil.move(tmp, str(out))
     return str(out)
@@ -179,9 +183,17 @@ def _decode_ctc(log_probs: np.ndarray, vocab: list, blank_id: int) -> str:
     return "".join(vocab[i] for i in out).replace("▁", " ").strip()
 
 
+def _duration_frames(dur_idx: int, duration_bins: Optional[list]) -> int:
+    """Map joint duration argmax index → frame count via duration_bins."""
+    if duration_bins:
+        return duration_bins[min(dur_idx, len(duration_bins) - 1)]
+    return dur_idx
+
+
 def _decode_tdt(encoder: np.ndarray, encoder_length: np.ndarray,
                 dec_model: Any, joint_model: Any, vocab: list, blank_id: int,
-                h_shape: tuple, c_shape: tuple, max_sym: int = 10) -> str:
+                h_shape: tuple, c_shape: tuple, duration_bins: Optional[list] = None,
+                max_sym: int = 10) -> str:
     T = int(encoder_length.flat[0])
     h = np.zeros(h_shape, dtype=np.float32)
     c = np.zeros(c_shape, dtype=np.float32)
@@ -199,7 +211,7 @@ def _decode_tdt(encoder: np.ndarray, encoder_length: np.ndarray,
         while not advanced:
             jd = joint_model.predict({"encoder_step": encoder[:, :, t:t + 1], "decoder_step": dec_feat})
             tok = int(jd["token_id"].flat[0])
-            dur = int(jd["duration"].flat[0])
+            dur = _duration_frames(int(jd["duration"].flat[0]), duration_bins)
 
             if tok == blank_id or syms >= max_sym:
                 t += max(1, dur)
@@ -263,7 +275,9 @@ def _check_repo(repo_dir: Path, audio_path: Path) -> Optional[str]:
                                 ct.ComputeUnit.CPU_ONLY)  # LSTM: CPU only
         joint_model = _load_model(str(repo_dir / components["joint_decision_single_step"]["path"]),
                                   ct.ComputeUnit.ALL)
-        return _decode_tdt(encoder, enc_len, dec_model, joint_model, vocab, blank_id, h_shape, c_shape)
+        duration_bins = meta.get("duration_bins")
+        return _decode_tdt(encoder, enc_len, dec_model, joint_model, vocab, blank_id,
+                           h_shape, c_shape, duration_bins=duration_bins)
 
     return None
 

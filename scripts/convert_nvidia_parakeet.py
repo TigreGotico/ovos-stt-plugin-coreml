@@ -295,7 +295,6 @@ def convert(
         help="16 kHz WAV for tracing (defaults to yc_first_minute_16k_15s.wav next to script)"),
     max_audio_seconds: float = typer.Option(15.0, "--max-audio-seconds"),
     mel_encoder_cu: str = typer.Option("ALL", "--mel-encoder-cu"),
-    decoder_cu: str = typer.Option("CPU_ONLY", "--decoder-cu"),
     joint_cu: str = typer.Option("ALL", "--joint-cu"),
     ctc_cu: str = typer.Option("ALL", "--ctc-cu"),
     compute_precision: Optional[str] = typer.Option(None, "--compute-precision"),
@@ -380,7 +379,14 @@ def convert(
 
     if (is_rnnt_family or (is_hybrid and not ctc_only)):
         num_extra = int(getattr(asr_model.joint, "num_extra_outputs", 0))
-        duration_bins = [0, 1, 2, 3, 4][:num_extra] if num_extra > 0 else []
+        # Read duration_bins from model config (TDT); fall back to [0..num_extra-1]
+        _tdt_cfg = getattr(asr_model.cfg.model_defaults, "tdt_durations", None)
+        if _tdt_cfg is not None:
+            duration_bins = list(_tdt_cfg)
+        elif num_extra > 0:
+            duration_bins = list(range(num_extra))
+        else:
+            duration_bins = []
         blank_idx = int(asr_model.decoder.blank_idx)
         dec_hidden = int(asr_model.decoder.pred_hidden)
         dec_layers = int(asr_model.decoder.pred_rnn_layers)

@@ -258,6 +258,13 @@ class CoremlSTT(STT):
             "cpu_and_ne":  ct.ComputeUnit.CPU_AND_NE,
         }
         cu_cfg = str(self.config.get("compute_units", "all")).lower().replace("-", "_")
+        if cu_cfg not in _cu_map:
+            import warnings
+            warnings.warn(
+                f"Unknown compute_units={cu_cfg!r}. "
+                f"Valid values: {list(_cu_map)}. Defaulting to 'all'.",
+                stacklevel=2,
+            )
         self._default_cu: ct.ComputeUnit = _cu_map.get(cu_cfg, ct.ComputeUnit.ALL)
 
         # Vocab: explicit path > <model_dir>/vocab.json
@@ -383,9 +390,14 @@ class CoremlSTT(STT):
 
     # ── CTC decoding ──────────────────────────────────────────────────────────
 
-    def _decode_ctc(self, encoder_out: np.ndarray) -> str:
-        """CTC: encoder output → text (greedy or beam search)."""
-        dec_out = self.ctc_decoder.predict({"encoder": encoder_out})
+    def _decode_ctc(self, encoder_out: np.ndarray, encoder_length: np.ndarray) -> str:
+        """CTC: encoder output → text (greedy or beam search).
+
+        Slices encoder_out to the actual (unpadded) length before decoding to
+        avoid spurious non-blank tokens from the padded frames.
+        """
+        T = int(encoder_length.flat[0])
+        dec_out = self.ctc_decoder.predict({"encoder": encoder_out[:, :, :T]})
         log_probs: np.ndarray = dec_out["log_probs"]        # [1, T, V]
 
         if self.lm is not None:
@@ -507,7 +519,7 @@ class CoremlSTT(STT):
         if self.model_type == "tdt":
             text = self._decode_tdt(enc_out["encoder"], enc_out["encoder_length"])
         else:
-            text = self._decode_ctc(enc_out["encoder"])
+            text = self._decode_ctc(enc_out["encoder"], enc_out["encoder_length"])
 
         return [(text, 1.0)]
 
@@ -533,25 +545,27 @@ ParakeetTDTSTT = CoremlSTT
 
 
 if __name__ == "__main__":
-    config = {
-        "metadata": "/Users/tigregotico/atc_parakeet_ctc/parakeet_ctc_coreml/metadata.json",
-        "vocab": "/Users/tigregotico/atc_parakeet_ctc/parakeet_ctc_coreml/vocab.json",
-        "encoder": "/Users/tigregotico/atc_parakeet_ctc/parakeet_ctc_coreml/parakeet_ctc_mel_encoder.mlpackage",
-        "decoder": "/Users/tigregotico/atc_parakeet_ctc/parakeet_ctc_coreml/parakeet_ctc_decoder.mlpackage",
-        "lm": "/tmp/en-mix.lm",
-        "lm_weight": 0.3,
-        "word_bonus": 1.0,
-        "beam_width": 100,
-    }
-    stt = CoremlSTT(config=config)
+    import sys
 
-    wav_file = "/Users/tigregotico/atc_parakeet_ctc/yc_first_minute_16k_15s.wav"
-    with AudioFile(wav_file) as f:
-        audio = f.read()
+    if len(sys.argv) < 3:
+        print(f"Usage: {sys.argv[0]} <metadata.json> <audio.wav> [lm.arpa]")
+        sys.exit(1)
 
-    greedy_config = {**config}
-    del greedy_config["lm"]
-    stt_greedy = CoremlSTT(config=greedy_config)
+    _metadata = sys.argv[1]
+    _audio_path = sys.argv[2]
+    _lm_path = sys.argv[3] if len(sys.argv) > 3 else None
 
-    print("Greedy:", stt_greedy.execute(audio))
-    print("Beam:  ", stt.execute(audio))
+    _config: dict = {"metadata": _metadata}
+    if _lm_path:
+        _config.update({"lm": _lm_path, "lm_weight": 0.3, "word_bonus": 1.0, "beam_width": 100})
+
+    with AudioFile(_audio_path) as _f:
+        _audio = _f.read()
+
+    if _lm_path:
+        _stt_greedy = CoremlSTT(config={k: v for k, v in _config.items() if k != "lm"})
+        _stt_lm = CoremlSTT(config=_config)
+        print("Greedy:", _stt_greedy.execute(_audio))
+        print("Beam:  ", _stt_lm.execute(_audio))
+    else:
+        print(CoremlSTT(config=_config).execute(_audio))

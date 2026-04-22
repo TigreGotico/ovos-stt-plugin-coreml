@@ -73,6 +73,8 @@ def quantize(
     dtype = dtype.lower()
     if dtype not in DTYPE_META:
         raise typer.BadParameter(f"--dtype must be one of: {', '.join(DTYPE_META)}")
+    if input_dir.resolve() == output_dir.resolve():
+        raise typer.BadParameter("--output-dir must differ from --input-dir")
     output_dir.mkdir(parents=True, exist_ok=True)
     summary = {}
     for item in sorted(input_dir.iterdir()):

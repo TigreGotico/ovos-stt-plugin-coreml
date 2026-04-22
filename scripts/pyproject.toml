@@ -8,10 +8,11 @@ dependencies = [
     "numpy",
     "soundfile",
     "typer",
+    "huggingface-hub",
     # PyObjC for native CoreML inference with ANE/GPU dispatch (macOS only)
-    "pyobjc-core",
-    "pyobjc-framework-CoreML",
-    "pyobjc-framework-Cocoa",
+    "pyobjc-core; sys_platform == 'darwin'",
+    "pyobjc-framework-CoreML; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
 ]
 
 [tool.uv]
