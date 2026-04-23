@@ -624,16 +624,23 @@ class CoremlSTT(STT):
             # Auto-select: pick the best repo for the configured language
             lang_tag = (self.lang or "en-us").lower()
             base_lang = lang_tag.split("-")[0].split("_")[0]
+            if base_lang not in _LANG_BEST_REPO:
+                import warnings
+                warnings.warn(
+                    f"Language {base_lang!r} is not supported; falling back to English model. "
+                    f"Supported languages: {sorted(_LANG_BEST_REPO)}",
+                    stacklevel=3,
+                )
             repo_id = _LANG_BEST_REPO.get(base_lang, _LANG_BEST_REPO["en"])
             self.config["repo_id"] = repo_id
 
         try:
             from huggingface_hub import snapshot_download
-        except ImportError:
+        except ImportError as exc:
             raise ImportError(
                 "huggingface_hub is required for HF auto-download. "
                 "Install it with: pip install huggingface-hub"
-            )
+            ) from exc
         local_dir = snapshot_download(repo_id=repo_id, repo_type="model")
         self.config["metadata"] = str(Path(local_dir) / "metadata.json")
 

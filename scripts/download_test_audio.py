@@ -170,7 +170,12 @@ def _maybe_resample(arr: np.ndarray, sr: int) -> np.ndarray:
         g = gcd(SAMPLE_RATE, sr)
         return resample_poly(arr, SAMPLE_RATE // g, sr // g).astype(np.float32)
     except ImportError:
-        return arr  # return as-is if scipy unavailable
+        if sr != SAMPLE_RATE:
+            raise RuntimeError(
+                f"Audio sample rate {sr} Hz != {SAMPLE_RATE} Hz and scipy is not installed. "
+                "Install it with: pip install scipy"
+            )
+        return arr
 
 
 def _fetch_clip(hf_dataset: str, hf_config: str, min_seconds: float = 5.0) -> Optional[np.ndarray]:

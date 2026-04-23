@@ -389,7 +389,8 @@ def convert(
     if (is_rnnt_family or (is_hybrid and not ctc_only)):
         num_extra = int(getattr(asr_model.joint, "num_extra_outputs", 0))
         # Read duration_bins from model config (TDT); fall back to [0..num_extra-1]
-        _tdt_cfg = getattr(asr_model.cfg.model_defaults, "tdt_durations", None)
+        _model_defaults = getattr(asr_model.cfg, "model_defaults", None)
+        _tdt_cfg = getattr(_model_defaults, "tdt_durations", None)
         if _tdt_cfg is not None:
             duration_bins = list(_tdt_cfg)
         elif num_extra > 0:
