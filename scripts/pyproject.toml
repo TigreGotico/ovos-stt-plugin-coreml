@@ -9,6 +9,8 @@ dependencies = [
     "soundfile",
     "typer",
     "huggingface-hub",
+    "torch",
+    "nemo_toolkit[asr]",
     # PyObjC for native CoreML inference with ANE/GPU dispatch (macOS only)
     "pyobjc-core; sys_platform == 'darwin'",
     "pyobjc-framework-CoreML; sys_platform == 'darwin'",

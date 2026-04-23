@@ -587,13 +587,11 @@ class CoremlSTT(STT):
         }
         cu_cfg = str(self.config.get("compute_units", "all")).lower().replace("-", "_")
         if cu_cfg not in _cu_map:
-            import warnings
-            warnings.warn(
+            raise ValueError(
                 f"Unknown compute_units={cu_cfg!r}. "
-                f"Valid values: {list(_cu_map)}. Defaulting to 'all'.",
-                stacklevel=2,
+                f"Valid values: {list(_cu_map)}."
             )
-        self._default_cu: ct.ComputeUnit = _cu_map.get(cu_cfg, ct.ComputeUnit.ALL)
+        self._default_cu: ct.ComputeUnit = _cu_map[cu_cfg]
 
         # Vocab: explicit path > <model_dir>/vocab.json
         vocab_path = self.config.get("vocab") or str(self._model_dir / "vocab.json")

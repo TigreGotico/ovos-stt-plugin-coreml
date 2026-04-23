@@ -50,10 +50,10 @@ def _compress(model: ct.models.MLModel, dtype: str) -> ct.models.MLModel:
         if _HAS_FP16_CONFIG:
             cfg = OptimizationConfig(global_config=OpFp16Config())
         else:
-            # Older coremltools: use linear quantizer with float16 numpy dtype
-            import numpy as np
-            cfg = OptimizationConfig(global_config=OpLinearQuantizerConfig(
-                mode="linear_symmetric", dtype=np.float16, granularity="per_channel"))
+            raise RuntimeError(
+                "float16 quantization requires coremltools >= 7.0 with OpFp16Config. "
+                "Upgrade: pip install 'coremltools>=7.0'"
+            )
         return linear_quantize_weights(model, config=cfg)
     if dtype == "4bit":
         cfg = OptimizationConfig(global_config=OpPalettizerConfig(mode="kmeans", nbits=4))
