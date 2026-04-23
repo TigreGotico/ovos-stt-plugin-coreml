@@ -1,0 +1,21 @@
+[project]
+name = "parakeet-coreml-scripts"
+version = "0.1.0"
+description = "Utility scripts for converting and spot-checking Parakeet CoreML models"
+requires-python = ">=3.10"
+dependencies = [
+    "coremltools>=8.0",
+    "numpy",
+    "soundfile",
+    "typer",
+    "huggingface-hub",
+    "torch",
+    "nemo_toolkit[asr]",
+    # PyObjC for native CoreML inference with ANE/GPU dispatch (macOS only)
+    "pyobjc-core; sys_platform == 'darwin'",
+    "pyobjc-framework-CoreML; sys_platform == 'darwin'",
+    "pyobjc-framework-Cocoa; sys_platform == 'darwin'",
+]
+
+[tool.uv]
+no-build-package = ["parakeet-coreml-scripts"]
