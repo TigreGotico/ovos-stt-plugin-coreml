@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0a2](https://github.com/TigreGotico/ovos-stt-plugin-coreml/tree/0.2.0a2) (2026-04-23)
+
+[Full Changelog](https://github.com/TigreGotico/ovos-stt-plugin-coreml/compare/0.2.0a1...0.2.0a2)
+
+**Merged pull requests:**
+
+- Fix TDT/RNNT decoding, add PyObjC ANE backend, HF auto-download [\#8](https://github.com/TigreGotico/ovos-stt-plugin-coreml/pull/8) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [0.2.0a1](https://github.com/TigreGotico/ovos-stt-plugin-coreml/tree/0.2.0a1) (2026-03-01)
 
 [Full Changelog](https://github.com/TigreGotico/ovos-stt-plugin-coreml/compare/0.1.0a1...0.2.0a1)
