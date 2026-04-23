@@ -11,6 +11,201 @@ from ovos_utils import classproperty
 
 from ovos_stt_plugin_coreml.lm import ARPALanguageModel, ctc_beam_search
 
+# ── Language → best published HF repo ────────────────────────────────────────
+# Used for auto-selection when no repo_id / metadata is set in config.
+# Order reflects quality preference where multiple models exist for a language.
+_V3_MULTILINGUAL_INT8 = "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-int8"
+
+_LANG_BEST_REPO: dict = {
+    # Dedicated language-specific models (preferred when available)
+    "en": "OpenVoiceOS/parakeet-tdt-ctc-110m-coreml-int8",  # smallest/fastest English
+    "ja": "OpenVoiceOS/parakeet-tdt-ctc-0.6b-ja-coreml-int8",
+    "vi": "OpenVoiceOS/parakeet-ctc-0.6b-vi-coreml-int8",
+    "da": "OpenVoiceOS/parakeet-rnnt-110m-da-coreml-int8",
+    "nl": "OpenVoiceOS/parakeet-tdt-0.6b-dutch-coreml-int8",
+    "et": "OpenVoiceOS/parakeet-tdt-0.6b-estonian-coreml-int8",
+    "pl": "OpenVoiceOS/parakeet-tdt-0.6b-polish-coreml-int8",
+    "pt": "OpenVoiceOS/parakeet-tdt-0.6b-portuguese-coreml-int8",
+    "sl": "OpenVoiceOS/parakeet-tdt-0.6b-slovenian-coreml-int8",
+    # Remaining 16 European languages covered by parakeet-tdt-0.6b-v3 (multilingual fallback)
+    "bg": _V3_MULTILINGUAL_INT8,   # Bulgarian
+    "cs": _V3_MULTILINGUAL_INT8,   # Czech
+    "de": _V3_MULTILINGUAL_INT8,   # German
+    "el": _V3_MULTILINGUAL_INT8,   # Greek
+    "es": _V3_MULTILINGUAL_INT8,   # Spanish
+    "fi": _V3_MULTILINGUAL_INT8,   # Finnish
+    "fr": _V3_MULTILINGUAL_INT8,   # French
+    "hr": _V3_MULTILINGUAL_INT8,   # Croatian
+    "hu": _V3_MULTILINGUAL_INT8,   # Hungarian
+    "it": _V3_MULTILINGUAL_INT8,   # Italian
+    "lt": _V3_MULTILINGUAL_INT8,   # Lithuanian
+    "lv": _V3_MULTILINGUAL_INT8,   # Latvian
+    "mt": _V3_MULTILINGUAL_INT8,   # Maltese
+    "ro": _V3_MULTILINGUAL_INT8,   # Romanian
+    "ru": _V3_MULTILINGUAL_INT8,   # Russian
+    "sk": _V3_MULTILINGUAL_INT8,   # Slovak
+    "sv": _V3_MULTILINGUAL_INT8,   # Swedish
+    "uk": _V3_MULTILINGUAL_INT8,   # Ukrainian
+}
+
+# All published repos, grouped by language, ordered best → smallest.
+# Useful for callers that want to enumerate or let users pick a variant.
+_ALL_REPOS: dict = {
+    "en": [
+        "OpenVoiceOS/parakeet-tdt-1.1b-coreml",
+        "OpenVoiceOS/parakeet-tdt-1.1b-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-1.1b-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-1.1b-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-1.1b-coreml-fp16",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v2-coreml",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v2-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v2-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v2-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v2-coreml-fp16",
+        "OpenVoiceOS/parakeet-ctc-1.1b-coreml",
+        "OpenVoiceOS/parakeet-ctc-1.1b-coreml-int8",
+        "OpenVoiceOS/parakeet-ctc-1.1b-coreml-4bit",
+        "OpenVoiceOS/parakeet-ctc-1.1b-coreml-6bit",
+        "OpenVoiceOS/parakeet-ctc-1.1b-coreml-fp16",
+        "OpenVoiceOS/parakeet-rnnt-1.1b-coreml",
+        "OpenVoiceOS/parakeet-rnnt-1.1b-coreml-int8",
+        "OpenVoiceOS/parakeet-rnnt-1.1b-coreml-4bit",
+        "OpenVoiceOS/parakeet-rnnt-1.1b-coreml-6bit",
+        "OpenVoiceOS/parakeet-rnnt-1.1b-coreml-fp16",
+        "OpenVoiceOS/parakeet-ctc-0.6b-coreml",
+        "OpenVoiceOS/parakeet-ctc-0.6b-coreml-int8",
+        "OpenVoiceOS/parakeet-ctc-0.6b-coreml-4bit",
+        "OpenVoiceOS/parakeet-ctc-0.6b-coreml-6bit",
+        "OpenVoiceOS/parakeet-rnnt-0.6b-coreml",
+        "OpenVoiceOS/parakeet-rnnt-0.6b-coreml-int8",
+        "OpenVoiceOS/parakeet-rnnt-0.6b-coreml-4bit",
+        "OpenVoiceOS/parakeet-rnnt-0.6b-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-ctc-110m-coreml-fp16",
+        "OpenVoiceOS/parakeet-tdt-ctc-110m-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-ctc-110m-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-ctc-110m-coreml-6bit",
+        "OpenVoiceOS/parakeet-rnnt-120m-eou-coreml",
+        "OpenVoiceOS/parakeet-rnnt-120m-eou-coreml-fp16",
+        "OpenVoiceOS/parakeet-rnnt-120m-eou-coreml-int8",
+        "OpenVoiceOS/parakeet-rnnt-120m-eou-coreml-6bit",
+    ],
+    "ja": [
+        "OpenVoiceOS/parakeet-tdt-ctc-0.6b-ja-coreml",
+        "OpenVoiceOS/parakeet-tdt-ctc-0.6b-ja-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-ctc-0.6b-ja-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-ctc-0.6b-ja-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-ctc-0.6b-ja-coreml-fp16",
+    ],
+    "vi": [
+        "OpenVoiceOS/parakeet-ctc-0.6b-vi-coreml",
+        "OpenVoiceOS/parakeet-ctc-0.6b-vi-coreml-int8",
+        "OpenVoiceOS/parakeet-ctc-0.6b-vi-coreml-4bit",
+        "OpenVoiceOS/parakeet-ctc-0.6b-vi-coreml-6bit",
+    ],
+    "nl": [
+        "OpenVoiceOS/parakeet-tdt-0.6b-dutch-coreml",
+        "OpenVoiceOS/parakeet-tdt-0.6b-dutch-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-0.6b-dutch-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-dutch-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-dutch-coreml-fp16",
+    ],
+    "et": [
+        "OpenVoiceOS/parakeet-tdt-0.6b-estonian-coreml",
+        "OpenVoiceOS/parakeet-tdt-0.6b-estonian-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-0.6b-estonian-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-estonian-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-estonian-coreml-fp16",
+    ],
+    "pl": [
+        "OpenVoiceOS/parakeet-tdt-0.6b-polish-coreml",
+        "OpenVoiceOS/parakeet-tdt-0.6b-polish-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-0.6b-polish-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-polish-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-polish-coreml-fp16",
+    ],
+    "pt": [
+        "OpenVoiceOS/parakeet-tdt-0.6b-portuguese-coreml",
+        "OpenVoiceOS/parakeet-tdt-0.6b-portuguese-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-0.6b-portuguese-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-portuguese-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-portuguese-coreml-fp16",
+    ],
+    "sl": [
+        "OpenVoiceOS/parakeet-tdt-0.6b-slovenian-coreml",
+        "OpenVoiceOS/parakeet-tdt-0.6b-slovenian-coreml-int8",
+        "OpenVoiceOS/parakeet-tdt-0.6b-slovenian-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-slovenian-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-slovenian-coreml-fp16",
+    ],
+    "da": [
+        "OpenVoiceOS/parakeet-rnnt-110m-da-coreml",
+        "OpenVoiceOS/parakeet-rnnt-110m-da-coreml-int8",
+        "OpenVoiceOS/parakeet-rnnt-110m-da-coreml-4bit",
+        "OpenVoiceOS/parakeet-rnnt-110m-da-coreml-6bit",
+        "OpenVoiceOS/parakeet-rnnt-110m-da-coreml-fp16",
+    ],
+    # 16 European languages without a dedicated model — served by multilingual v3
+    "bg": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "cs": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "de": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "el": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "es": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "fi": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "fr": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "hr": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "hu": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "it": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "lt": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "lv": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "mt": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "ro": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "ru": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "sk": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "sv": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+    "uk": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
+}
+
 # ── PyObjC CoreML backend (ANE dispatch) ─────────────────────────────────────
 # When pyobjc-framework-CoreML is installed, models are loaded and run through
 # the native CoreML Objective-C framework, which properly dispatches to ANE/GPU.
@@ -211,6 +406,14 @@ class CoremlSTT(STT):
 
         {"repo_id": "OpenVoiceOS/parakeet-tdt-0.6b-v2-coreml"}
 
+    Zero-config — omit both repo_id and metadata to auto-select the best
+    published int8 model for the configured language:
+
+        {}   # → parakeet-tdt-ctc-110m-coreml-int8  for lang=en-*
+             # → parakeet-tdt-0.6b-dutch-coreml-int8 for lang=nl-*
+             # → parakeet-tdt-0.6b-v3-coreml-int8   for lang=de-*, fr-*, … (16 EU langs via multilingual v3)
+             # → … (see _LANG_BEST_REPO for the full mapping)
+
     The model is cached in ~/.cache/huggingface/hub (shared with transformers).
     Requires: pip install huggingface-hub
 
@@ -282,18 +485,29 @@ class CoremlSTT(STT):
             self._init_ctc()
 
     def _maybe_download_from_hub(self) -> None:
-        """Download model snapshot from HuggingFace Hub when repo_id is configured.
+        """Download model snapshot from HuggingFace Hub.
 
-        Triggered only when ``repo_id`` is set and ``metadata`` is absent.
+        Triggered when ``repo_id`` is set, or when neither ``repo_id`` nor
+        ``metadata`` is configured (auto-selects the best published model for
+        ``self.lang``).
+
         Uses the standard HF Hub cache (``~/.cache/huggingface/hub`` by default,
         respects ``HF_HOME`` / ``HUGGINGFACE_HUB_CACHE`` env vars), so the
         download is shared with transformers and other HF tooling.
 
         Raises ``ImportError`` if ``huggingface_hub`` is not installed.
         """
+        if self.config.get("metadata"):
+            return  # explicit local path — nothing to do
+
         repo_id = self.config.get("repo_id")
-        if not repo_id or self.config.get("metadata"):
-            return
+        if not repo_id:
+            # Auto-select: pick the best repo for the configured language
+            lang_tag = (self.lang or "en-us").lower()
+            base_lang = lang_tag.split("-")[0].split("_")[0]
+            repo_id = _LANG_BEST_REPO.get(base_lang, _LANG_BEST_REPO["en"])
+            self.config["repo_id"] = repo_id
+
         try:
             from huggingface_hub import snapshot_download
         except ImportError:
@@ -535,15 +749,7 @@ class CoremlSTT(STT):
 
     @classproperty
     def available_languages(cls) -> set:
-        # CTC models are English-only.
-        # TDT v3 (parakeet-tdt-0.6b-v3) supports 25 European languages with
-        # automatic language detection — no language input is needed or accepted.
-        # We return the full superset; the loaded model determines actual coverage.
-        return {
-            "en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "uk",
-            "cs", "ro", "hu", "sv", "fi", "da", "sk", "bg", "hr", "sr",
-            "sl", "lt", "lv", "et", "el", "mt",
-        }
+        return set(_LANG_BEST_REPO.keys())
 
 
 # Alias kept for backward compatibility with the separate entry point
