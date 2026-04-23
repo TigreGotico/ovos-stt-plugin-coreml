@@ -41,7 +41,7 @@ import soundfile as sf
 import torch
 import typer
 
-AUTHOR = "Fluid Inference"
+AUTHOR = "TigreGotico"
 DEPLOYMENT_TARGET = ct.target.iOS17
 
 
@@ -310,10 +310,16 @@ def convert(
 
     asr_model, cls_name, checkpoint = _load_model(model_id, nemo_path, model_class)
 
-    # FastConformer 1.1b uses local attention windows (att_context_size=[128,128])
-    # which produce as_strided ops unsupported by CoreML. Switch to global attention.
+    # Switch to global attention to avoid as_strided ops unsupported by CoreML.
+    # Unified-FastConformer uses a 3-element context [left, chunk, right]; standard
+    # FastConformer uses 2-element [left, right]. Infer the right length from the
+    # first entry in att_context_size_all so we always pass the correct shape.
     if hasattr(asr_model.encoder, "set_default_att_context_size"):
-        asr_model.encoder.set_default_att_context_size([-1, -1])
+        try:
+            ctx_len = len(asr_model.encoder.att_context_size_all[0])
+        except Exception:
+            ctx_len = 2
+        asr_model.encoder.set_default_att_context_size([-1] * ctx_len)
 
     sample_rate = int(asr_model.cfg.preprocessor.sample_rate)
     max_samples = int(round(max_audio_seconds * sample_rate))

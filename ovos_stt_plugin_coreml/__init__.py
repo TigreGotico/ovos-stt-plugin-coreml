@@ -16,6 +16,12 @@ from ovos_stt_plugin_coreml.lm import ARPALanguageModel, ctc_beam_search
 # Order reflects quality preference where multiple models exist for a language.
 _V3_MULTILINGUAL_INT8 = "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-int8"
 
+# Community language-specific model constants
+_EU_V2_INT8  = "OpenVoiceOS/stt-eu-conformer-transducer-large-v2-coreml-int8"   # Basque (best)
+_ES_INT8     = "OpenVoiceOS/parakeet-rnnt-1.1b-es-coreml-int8"                  # Spanish (fine-tuned parakeet)
+_CA_ES_INT8  = "OpenVoiceOS/stt-ca-es-conformer-transducer-large-coreml-int8"   # Catalan+Spanish
+_LOS_INT8    = "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-int8"      # Catalan+Spanish+Galician+Basque
+
 _LANG_BEST_REPO: dict = {
     # Dedicated language-specific models (preferred when available)
     "en": "OpenVoiceOS/parakeet-tdt-ctc-110m-coreml-int8",  # smallest/fastest English
@@ -27,12 +33,15 @@ _LANG_BEST_REPO: dict = {
     "pl": "OpenVoiceOS/parakeet-tdt-0.6b-polish-coreml-int8",
     "pt": "OpenVoiceOS/parakeet-tdt-0.6b-portuguese-coreml-int8",
     "sl": "OpenVoiceOS/parakeet-tdt-0.6b-slovenian-coreml-int8",
-    # Remaining 16 European languages covered by parakeet-tdt-0.6b-v3 (multilingual fallback)
+    "eu": _EU_V2_INT8,   # Basque — HiTZ stt_eu_conformer_transducer_large_v2
+    "es": _ES_INT8,      # Spanish — parakeet-rnnt-1.1b fine-tuned on Spanish CV17
+    "ca": _CA_ES_INT8,   # Catalan — projecte-aina bilingual ca-es
+    "gl": _LOS_INT8,     # Galician — BSC-LT LoS (only dedicated option)
+    # 15 European languages without a dedicated model — served by multilingual v3
     "bg": _V3_MULTILINGUAL_INT8,   # Bulgarian
     "cs": _V3_MULTILINGUAL_INT8,   # Czech
     "de": _V3_MULTILINGUAL_INT8,   # German
     "el": _V3_MULTILINGUAL_INT8,   # Greek
-    "es": _V3_MULTILINGUAL_INT8,   # Spanish
     "fi": _V3_MULTILINGUAL_INT8,   # Finnish
     "fr": _V3_MULTILINGUAL_INT8,   # French
     "hr": _V3_MULTILINGUAL_INT8,   # Croatian
@@ -93,6 +102,10 @@ _ALL_REPOS: dict = {
         "OpenVoiceOS/parakeet-rnnt-120m-eou-coreml-fp16",
         "OpenVoiceOS/parakeet-rnnt-120m-eou-coreml-int8",
         "OpenVoiceOS/parakeet-rnnt-120m-eou-coreml-6bit",
+        "OpenVoiceOS/parakeet-unified-en-0.6b-coreml",
+        "OpenVoiceOS/parakeet-unified-en-0.6b-coreml-int8",
+        "OpenVoiceOS/parakeet-unified-en-0.6b-coreml-4bit",
+        "OpenVoiceOS/parakeet-unified-en-0.6b-coreml-6bit",
     ],
     "ja": [
         "OpenVoiceOS/parakeet-tdt-ctc-0.6b-ja-coreml",
@@ -149,7 +162,77 @@ _ALL_REPOS: dict = {
         "OpenVoiceOS/parakeet-rnnt-110m-da-coreml-6bit",
         "OpenVoiceOS/parakeet-rnnt-110m-da-coreml-fp16",
     ],
-    # 16 European languages without a dedicated model — served by multilingual v3
+    # Languages with dedicated community models (preferred over multilingual v3)
+    "eu": [
+        "OpenVoiceOS/stt-eu-conformer-transducer-large-v2-coreml",
+        "OpenVoiceOS/stt-eu-conformer-transducer-large-v2-coreml-int8",
+        "OpenVoiceOS/stt-eu-conformer-transducer-large-v2-coreml-4bit",
+        "OpenVoiceOS/stt-eu-conformer-transducer-large-v2-coreml-6bit",
+        "OpenVoiceOS/stt-eu-conformer-transducer-large-coreml",
+        "OpenVoiceOS/stt-eu-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/stt-eu-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/stt-eu-conformer-transducer-large-coreml-6bit",
+        "OpenVoiceOS/stt-eu-conformer-ctc-large-coreml",
+        "OpenVoiceOS/stt-eu-conformer-ctc-large-coreml-int8",
+        "OpenVoiceOS/stt-eu-conformer-ctc-large-coreml-4bit",
+        "OpenVoiceOS/stt-eu-conformer-ctc-large-coreml-6bit",
+        "OpenVoiceOS/stt-eseu-conformer-transducer-large-coreml",
+        "OpenVoiceOS/stt-eseu-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/stt-eseu-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/stt-eseu-conformer-transducer-large-coreml-6bit",
+        "OpenVoiceOS/bbs-s2tc-conformer-transducer-large-coreml",
+        "OpenVoiceOS/bbs-s2tc-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/bbs-s2tc-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/bbs-s2tc-conformer-transducer-large-coreml-6bit",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-6bit",
+    ],
+    "es": [
+        "OpenVoiceOS/parakeet-rnnt-1.1b-es-coreml",
+        "OpenVoiceOS/parakeet-rnnt-1.1b-es-coreml-int8",
+        "OpenVoiceOS/parakeet-rnnt-1.1b-es-coreml-4bit",
+        "OpenVoiceOS/parakeet-rnnt-1.1b-es-coreml-6bit",
+        "OpenVoiceOS/stt-ca-es-conformer-transducer-large-coreml",
+        "OpenVoiceOS/stt-ca-es-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/stt-ca-es-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/stt-ca-es-conformer-transducer-large-coreml-6bit",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-punctuated-coreml",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-punctuated-coreml-int8",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-punctuated-coreml-4bit",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-punctuated-coreml-6bit",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-6bit",
+        "OpenVoiceOS/stt-eseu-conformer-transducer-large-coreml",
+        "OpenVoiceOS/stt-eseu-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/stt-eseu-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/stt-eseu-conformer-transducer-large-coreml-6bit",
+        _V3_MULTILINGUAL_INT8,
+        "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
+        "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16",
+    ],
+    "ca": [
+        "OpenVoiceOS/stt-ca-es-conformer-transducer-large-coreml",
+        "OpenVoiceOS/stt-ca-es-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/stt-ca-es-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/stt-ca-es-conformer-transducer-large-coreml-6bit",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-6bit",
+    ],
+    "gl": [
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-int8",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-4bit",
+        "OpenVoiceOS/stt-los-conformer-transducer-large-coreml-6bit",
+    ],
+    # 15 European languages without a dedicated model — served by multilingual v3
     "bg": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
            "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
            "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
@@ -160,9 +243,6 @@ _ALL_REPOS: dict = {
            "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
            "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
     "el": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
-           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
-           "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
-    "es": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
            "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-4bit", "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-6bit",
            "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml-fp16"],
     "fi": [_V3_MULTILINGUAL_INT8, "OpenVoiceOS/parakeet-tdt-0.6b-v3-coreml",
@@ -218,6 +298,25 @@ except ImportError:
     _PYOBJC = False
 
 
+def _deref_mlpackage(pkg_path: str) -> str:
+    """Return a real-file (no-symlink) copy of the mlpackage.
+
+    The HF hub cache stores weights as symlinked blobs; the CoreML compiler
+    subprocess cannot follow cross-device symlinks. Creates a persistent
+    sibling directory (<name>.deref.mlpackage) and reuses it across runs.
+    """
+    pkg = Path(pkg_path)
+    if not any(p.is_symlink() for p in pkg.rglob("*")):
+        return pkg_path
+    deref = pkg.with_suffix(".deref.mlpackage")
+    pkg_mtime = pkg.stat().st_mtime
+    if not deref.exists() or deref.stat().st_mtime < pkg_mtime:
+        if deref.exists():
+            shutil.rmtree(deref)
+        shutil.copytree(str(pkg), str(deref), symlinks=False)
+    return str(deref)
+
+
 def _compile_mlpackage(mlpackage_path: str) -> str:
     """Compile a .mlpackage to .mlmodelc (cached alongside the package).
 
@@ -226,8 +325,12 @@ def _compile_mlpackage(mlpackage_path: str) -> str:
     """
     pkg = Path(mlpackage_path)
     out = pkg.parent / (pkg.stem + ".mlmodelc")
-    if not out.exists():
-        tmp = ct.utils.compile_model(str(pkg))
+    pkg_mtime = pkg.stat().st_mtime
+    if not out.exists() or out.stat().st_mtime < pkg_mtime:
+        if out.exists():
+            shutil.rmtree(out)
+        real_pkg = _deref_mlpackage(mlpackage_path)
+        tmp = ct.utils.compile_model(real_pkg)
         shutil.move(tmp, str(out))
     return str(out)
 
@@ -255,8 +358,10 @@ def _load_model(mlpackage_path: str, compute_units: ct.ComputeUnit) -> Any:
         if err or model is None:
             raise RuntimeError(f"CoreML load failed for {mlmodelc}: {err}")
         return _ObjCModel(model)
-    # No PyObjC — load .mlpackage directly via coremltools
-    return ct.models.MLModel(mlpackage_path, compute_units=compute_units)
+    # No PyObjC — resolve any HF-cache symlinks before handing off to
+    # coremltools (whose compiler subprocess cannot follow cross-device links).
+    real_pkg = _deref_mlpackage(mlpackage_path)
+    return ct.models.MLModel(real_pkg, compute_units=compute_units)
 
 
 class _ObjCModel:
@@ -264,9 +369,15 @@ class _ObjCModel:
     predict(dict) → dict interface, bridging numpy ↔ MLMultiArray."""
 
     def __init__(self, objc_model: Any) -> None:
+        """Store the native ObjC MLModel instance."""
         self._m = objc_model
 
     def predict(self, inputs: dict) -> dict:
+        """Run inference via the native CoreML ObjC framework.
+
+        Converts numpy arrays to MLMultiArray inputs, calls the model, then
+        converts MLMultiArray outputs back to numpy arrays.
+        """
         import ctypes
 
         def _to_mlarray(arr: np.ndarray) -> Any:
@@ -298,14 +409,23 @@ class _ObjCModel:
                 _CoreML.MLMultiArrayDataTypeInt32:   (np.int32,   4),
             }
             np_dtype, itemsize = _dtype_info.get(ml_arr.dataType(), (np.float32, 4))
+            # Validate C-contiguous strides before raw pointer access
+            strides = tuple(int(s) for s in ml_arr.strides())
+            expected_stride = 1
+            expected: List[int] = []
+            for dim in reversed(shape):
+                expected.insert(0, expected_stride)
+                expected_stride *= dim
+            is_contiguous = strides == tuple(expected)
             # Fast path: read raw bytes via data pointer (zero-copy where supported)
-            try:
-                ptr = ml_arr.dataPointer()
-                addr = ptr if isinstance(ptr, int) else int(ptr)
-                buf = ctypes.string_at(addr, total * itemsize)
-                return np.frombuffer(buf, dtype=np_dtype).reshape(shape).copy()
-            except Exception:
-                pass
+            if is_contiguous:
+                try:
+                    ptr = ml_arr.dataPointer()
+                    addr = ptr if isinstance(ptr, int) else int(ptr)
+                    buf = ctypes.string_at(addr, total * itemsize)
+                    return np.frombuffer(buf, dtype=np_dtype).reshape(shape).copy()
+                except Exception:
+                    pass
             # Fallback: element-wise (safe on all PyObjC versions, O(n) Python)
             flat = np.empty(total, dtype=np_dtype)
             for i in range(total):
@@ -441,6 +561,7 @@ class CoremlSTT(STT):
     # ── Initialisation ────────────────────────────────────────────────────────
 
     def __init__(self, *args, **kwargs):
+        """Initialise the plugin: download model if needed, load metadata, vocab, and CoreML components."""
         super().__init__(*args, **kwargs)
 
         self._maybe_download_from_hub()
@@ -555,6 +676,7 @@ class CoremlSTT(STT):
         )
 
     def _init_ctc(self) -> None:
+        """Load CTC encoder and decoder models plus optional ARPA language model."""
         # blank_id: CTC metadata stores it explicitly; TDT-flavoured hybrid uses vocab_size
         self.BLANK_ID: int = self.meta.get("blank_id", self.meta.get("vocab_size", 1024))
 
@@ -571,6 +693,7 @@ class CoremlSTT(STT):
         self.beam_width: int = int(self.config.get("beam_width", 100))
 
     def _init_tdt(self) -> None:
+        """Load TDT/RNNT encoder, prediction-net decoder, and joint decision models."""
         # blank_id is explicit in metadata for all converted models; fall back to vocab_size
         self.BLANK_ID: int = self.meta.get("blank_id", self.meta.get("vocab_size", 1024))
 
@@ -598,6 +721,7 @@ class CoremlSTT(STT):
     # ── Audio preparation (shared) ────────────────────────────────────────────
 
     def _prepare_audio(self, audio: AudioData) -> Tuple[np.ndarray, np.ndarray]:
+        """Convert AudioData to a fixed-length float32 signal and an exact-length array."""
         audio_array = audio.get_np_float32(convert_rate=self.SAMPLE_RATE)
         original_len = len(audio_array)
         if len(audio_array) < self.MAX_SAMPLES:
@@ -729,6 +853,7 @@ class CoremlSTT(STT):
     # ── Public interface ──────────────────────────────────────────────────────
 
     def transcribe(self, audio: AudioData, lang: Optional[str] = None) -> List[Tuple[str, float]]:
+        """Transcribe audio and return a list of (transcript, confidence) tuples."""
         audio_signal, audio_length = self._prepare_audio(audio)
 
         enc_out = self.mel_encoder.predict({
@@ -744,11 +869,13 @@ class CoremlSTT(STT):
         return [(text, 1.0)]
 
     def execute(self, audio, language=None) -> str:
+        """Return the top transcript string for the given audio."""
         transcripts = self.transcribe(audio, language)
         return transcripts[0][0] if transcripts else ""
 
     @classproperty
     def available_languages(cls) -> set:
+        """Return the set of BCP-47 base language codes supported by published models."""
         return set(_LANG_BEST_REPO.keys())
 
 
