@@ -1,9 +1,10 @@
 # OVOS CoreML STT Plugin
 
-An OVOS Speech-to-Text plugin that runs speech recognition models natively on Apple devices using CoreML.
+An OVOS Speech-to-Text plugin that runs speech recognition models on Apple devices with CoreML. Inference
+runs on-device. No audio leaves the machine.
 
-Supports four model families through a single generic plugin class that auto-detects the architecture from
-`metadata.json`:
+A single plugin class supports four model families. It reads `metadata.json` and detects the architecture
+automatically:
 
 | Model family           | Architecture         | Languages                   | Decoding                                      |
 |------------------------|----------------------|-----------------------------|-----------------------------------------------|
@@ -17,16 +18,16 @@ Supports four model families through a single generic plugin class that auto-det
 
 ## Features
 
-- **Zero-config** — omit all model settings and the plugin auto-selects the best int8 model for the configured OVOS language
-- **On-device inference** — CoreML runs entirely on-device; no network calls, no data leaves the machine
-- **Neural Engine dispatch** — when `pyobjc-framework-CoreML` is installed, models compile to `.mlmodelc` and
-  load through the native ObjC `MLModel` for proper ANE/GPU dispatch
-- **Auto-detection** — plugin reads `metadata.json` and selects the correct decoding path automatically
-- **HuggingFace auto-download** — set `repo_id` instead of `metadata` to download and cache automatically
-- **27 languages** — dedicated models for EN/JA/VI/DA/NL/ET/PL/PT/SL; 16 more EU languages via multilingual v3
-- **Compute unit control** — `compute_units` config key: `"all"` (default), `"cpu_only"`, `"cpu_and_gpu"`, `"cpu_and_ne"`
-- **Optional ARPA LM** — CTC models support bigram beam search with a language model for higher accuracy
-- **Quantization support** — FP32, INT8, 4-bit, 6-bit variants on HuggingFace
+- **Zero-config**: omit all model settings and the plugin selects the best int8 model for the configured OVOS language.
+- **On-device inference**: CoreML runs entirely on-device. No network calls happen, and no data leaves the machine.
+- **Neural Engine dispatch**: when `pyobjc-framework-CoreML` is installed, models compile to `.mlmodelc` and
+  load through the native ObjC `MLModel` for ANE/GPU dispatch.
+- **Auto-detection**: the plugin reads `metadata.json` and selects the correct decoding path automatically.
+- **HuggingFace auto-download**: set `repo_id` instead of `metadata` to download and cache the model automatically.
+- **27 languages**: dedicated models for EN/JA/VI/DA/NL/ET/PL/PT/SL, plus 16 more EU languages through the multilingual v3 model.
+- **Compute unit control**: the `compute_units` config key accepts `"all"` (default), `"cpu_only"`, `"cpu_and_gpu"`, or `"cpu_and_ne"`.
+- **Optional ARPA LM**: CTC models support bigram beam search with a language model for higher accuracy.
+- **Quantization support**: FP32, INT8, 4-bit, and 6-bit variants on HuggingFace.
 
 ## Installation
 
@@ -131,19 +132,19 @@ All component paths and vocab are resolved from the metadata directory automatic
 
 | Key                          | Default                     | Description                                             |
 |------------------------------|-----------------------------|---------------------------------------------------------|
-| `repo_id`                    | —                           | HF repo id; auto-downloads when `metadata` is absent   |
+| `repo_id`                    | none                        | HF repo id. Auto-downloads when `metadata` is absent.  |
 | `metadata`                   | **required** (or `repo_id`) | Path to `metadata.json` produced by the export script   |
-| `model_type`                 | auto                        | `"ctc"` or `"tdt"` — override auto-detection            |
+| `model_type`                 | auto                        | `"ctc"` or `"tdt"`, overrides auto-detection            |
 | `compute_units`              | `"all"`                     | `"all"` · `"cpu_only"` · `"cpu_and_gpu"` · `"cpu_and_ne"` |
 | `vocab`                      | `<metadata_dir>/vocab.json` | Path to `vocab.json`                                    |
 | `encoder`                    | from metadata               | Path to mel encoder `.mlpackage`                        |
-| `decoder`                    | from metadata               | CTC: ctc decoder; TDT: RNNT prediction net `.mlpackage` |
-| `joint_decision_single_step` | from metadata               | TDT/RNNT only — single-step joint `.mlpackage`          |
-| `max_symbols_per_step`       | `10`                        | TDT/RNNT only — max token emissions per encoder frame   |
-| `lm`                         | —                           | CTC only — path to ARPA LM (enables beam search)        |
-| `lm_weight`                  | `0.3`                       | CTC + LM — LM interpolation weight                      |
-| `word_bonus`                 | `1.0`                       | CTC + LM — per-word score bonus in nats                 |
-| `beam_width`                 | `100`                       | CTC + LM — number of beams kept per timestep            |
+| `decoder`                    | from metadata               | CTC decoder, or RNNT prediction net for TDT             |
+| `joint_decision_single_step` | from metadata               | TDT/RNNT only, single-step joint `.mlpackage`           |
+| `max_symbols_per_step`       | `10`                        | TDT/RNNT only, max token emissions per encoder frame    |
+| `lm`                         | none                        | CTC only, path to ARPA LM (enables beam search)         |
+| `lm_weight`                  | `0.3`                       | CTC + LM, LM interpolation weight                       |
+| `word_bonus`                 | `1.0`                       | CTC + LM, per-word score bonus in nats                  |
+| `beam_width`                 | `100`                       | CTC + LM, number of beams kept per timestep             |
 
 ### CTC beam search with ARPA LM
 
@@ -223,16 +224,16 @@ spurious tokens from padding frames.
 
 Token and Duration Transducer decoding runs a per-frame loop:
 
-1. `mel_encoder` encodes the full utterance once → encoder frames `[1, D, T]`.
+1. `mel_encoder` encodes the full utterance once into encoder frames `[1, D, T]`.
 2. For each encoder frame `t`:
     - Run the LSTM prediction network with the last emitted token.
     - Query `joint_decision_single_step` with the current encoder frame and prediction output.
     - The joint returns a **token id** and a **duration argmax index**.
-    - The duration index is mapped to a frame count via `duration_bins` from metadata (e.g. `[0,1,2,3,4]`).
-    - If blank → advance `t` by `max(1, duration)`.
-    - If non-blank → emit token; if `duration > 0` advance frame, if `duration == 0` re-run prediction net and stay on
-      frame (up to `max_symbols_per_step`).
-    - For pure RNNT: duration is always 0; the loop advances one frame per blank.
+    - The duration index is mapped to a frame count with `duration_bins` from metadata (for example `[0,1,2,3,4]`).
+    - If blank, advance `t` by `max(1, duration)`.
+    - If non-blank, emit the token. If `duration > 0`, advance the frame. If `duration == 0`, re-run the prediction net
+      and stay on the frame (up to `max_symbols_per_step`).
+    - For pure RNNT, duration is always 0, and the loop advances one frame per blank.
 
 ## Export Utilities
 
@@ -264,10 +265,10 @@ python scripts/convert_nvidia_parakeet.py \
   --output-dir ./parakeet-tdt-0.6b-polish-coreml
 ```
 
-> **Note:** All conversion scripts default to `--compute-precision FLOAT32`. This is required for 0.6b-scale
-> conformer encoders — FP16 intermediate activations overflow during attention/matmul with real audio, producing
-> all-NaN encoder output. Silence inputs happen to stay within FP16 range and mask the bug, so always test with
-> real speech.
+> **Note:** All conversion scripts default to `--compute-precision FLOAT32`. This setting is required for 0.6b-scale
+> conformer encoders. FP16 intermediate activations overflow during attention and matmul with real audio, and
+> produce all-NaN encoder output. Silence inputs happen to stay within FP16 range and mask the bug, so always test
+> with real speech.
 
 ### Post-hoc weight compression
 
@@ -291,8 +292,8 @@ python scripts/quantize_nvidia_parakeet.py \
 |------------------------------|-----------------------|-----------------------------------------------------|
 | `mel_encoder`                | `ALL` or `CPU_AND_NE` | Conformer encoder maps well to ANE on Apple Silicon |
 | `decoder`                    | `CPU_ONLY`            | LSTM state passing is always forced to CPU          |
-| `joint_decision_single_step` | `ALL` or `CPU_AND_NE` | Linear projection + activation; ANE-friendly        |
-| `ctc_decoder`                | `ALL` or `CPU_AND_NE` | Matrix multiply; ANE-friendly                       |
+| `joint_decision_single_step` | `ALL` or `CPU_AND_NE` | Linear projection and activation, ANE-friendly      |
+| `ctc_decoder`                | `ALL` or `CPU_AND_NE` | Matrix multiply, ANE-friendly                       |
 
 ## Model Support
 
@@ -325,39 +326,46 @@ python scripts/quantize_nvidia_parakeet.py \
 
 Each slug is published on HuggingFace as `OpenVoiceOS/<slug>-coreml` in up to four quantization variants:
 FP32 (base), INT8, 4-bit, 6-bit. Models built on the 0.6b conformer encoder (`ctc-0.6b`, `ctc-0.6b-vi`,
-`rnnt-0.6b`) have no FP16 variant — FP16 activations cause NaN during inference with real audio on that architecture.
+`rnnt-0.6b`) have no FP16 variant, because FP16 activations cause NaN during inference with real audio on that architecture.
 
-### Parakeet TDT v3 — supported languages
+### Parakeet TDT v3: supported languages
 
 `bg` `cs` `da` `de` `el` `en` `es` `et` `fi` `fr` `hr` `hu` `it` `lv` `lt` `mt` `nl` `pl` `pt` `ro` `ru` `sk` `sl` `sv` `uk`
 
-Language is **automatically detected** from the audio — no language input is accepted or needed.
+The plugin detects the language automatically from the audio. No language input is accepted or needed.
 
 ## Requirements
 
 - `ovos-plugin-manager>=2.1.1,<3.0.0`
 - `ovos-utils>=0.8.4,<1.0.0`
 - `coremltools>=7.1`
-- `huggingface-hub` *(optional — required for `repo_id` auto-download and zero-config mode)*
-- `pyobjc-framework-CoreML` *(optional — enables ANE/GPU dispatch via native ObjC framework)*
+- `huggingface-hub` *(optional, required for `repo_id` auto-download and zero-config mode)*
+- `pyobjc-framework-CoreML` *(optional, enables ANE/GPU dispatch through the native ObjC framework)*
 
 ## Limitations
 
-- **Fixed 15-second window** — audio longer than 15 s is truncated; shorter audio is zero-padded. Chunked/streaming
-  decoding is not yet supported.
-- **No confidence scores** — returns `1.0` for all results.
-- **CTC beam search is CPU-bound** — the Python beam search is slower than greedy. For latency-sensitive use prefer
+- **Fixed 15-second window**: audio longer than 15 s is truncated, and shorter audio is zero-padded. Chunked and
+  streaming decoding are not yet supported.
+- **No confidence scores**: the plugin returns `1.0` for all results.
+- **CTC beam search is CPU-bound**: the Python beam search is slower than greedy. For latency-sensitive use, prefer
   greedy decoding or a native LM decoder.
-- **TDT/RNNT decoder loop is sequential** — each joint step depends on the previous; the Python loop cannot be
-  parallelised.
-- **0.6b conformer requires FLOAT32 compute precision** — `parakeet-ctc-0.6b`, `parakeet-ctc-0.6b-vi`, and
+- **TDT/RNNT decoder loop is sequential**: each joint step depends on the previous one, so the Python loop cannot
+  run in parallel.
+- **0.6b conformer requires FLOAT32 compute precision**: `parakeet-ctc-0.6b`, `parakeet-ctc-0.6b-vi`, and
   `parakeet-rnnt-0.6b` produce NaN with FP16 activations. All models in the HF collection are exported with
-  `compute_precision=FLOAT32`. These models have no FP16 quantized variant for the same reason; use INT8 instead
-  (~4× smaller, compute stays FLOAT32).
+  `compute_precision=FLOAT32`. These models have no FP16 quantized variant for the same reason, so use INT8 instead
+  (about 4x smaller, and compute stays FLOAT32).
+
+## Related Projects
+
+- [ovos-stt-plugin-whisper](https://github.com/TigreGotico/ovos-stt-plugin-whisper): OVOS STT plugin for OpenAI Whisper models.
+- [ovos-stt-plugin-onnx-asr](https://github.com/TigreGotico/ovos-stt-plugin-onnx-asr): OVOS STT plugin for ONNX-exported ASR models.
+- [ovos-stt-plugin-sherpa-onnx](https://github.com/TigreGotico/ovos-stt-plugin-sherpa-onnx): OVOS STT plugin backed by sherpa-onnx.
+- [ovos-stt-plugin-rover](https://github.com/TigreGotico/ovos-stt-plugin-rover): OVOS STT plugin that combines results from multiple STT engines with ROVER voting.
 
 ## License
 
-Apache License 2.0 – See [LICENSE](LICENSE) file.
+Apache License 2.0. See the [LICENSE](LICENSE) file.
 
 ## Contributing
 
